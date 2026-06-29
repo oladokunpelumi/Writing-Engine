@@ -1,0 +1,93 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  color-scheme: light;
+  font-family: "DM Sans", ui-sans-serif, system-ui, sans-serif;
+}
+
+body {
+  margin: 0;
+}
+
+button,
+input,
+textarea,
+select {
+  font: inherit;
+}
+
+button:focus-visible,
+a:focus-visible,
+input:focus-visible,
+textarea:focus-visible,
+select:focus-visible {
+  outline: 3px solid rgba(14, 116, 144, 0.35);
+  outline-offset: 2px;
+}
+
+@layer components {
+  .desk-panel {
+    @apply rounded-md border border-slate-200 bg-white/90 p-4 shadow-sm backdrop-blur md:p-5;
+  }
+
+  .nav-btn {
+    @apply flex h-11 items-center gap-3 rounded-md px-3 text-left text-sm font-bold text-slate-600 transition;
+  }
+
+  .nav-btn:hover {
+    @apply bg-slate-100 text-ink;
+  }
+
+  .nav-btn-active {
+    @apply bg-ink text-white;
+  }
+
+  .label {
+    @apply mb-1 block text-xs font-bold uppercase tracking-normal text-slate-500;
+  }
+
+  .input {
+    @apply w-full rounded-md border border-slate-200 bg-white px-3 py-2 text-sm leading-6 text-ink shadow-inner transition placeholder:text-slate-300;
+  }
+
+  .input:focus {
+    @apply border-tide outline-none ring-2 ring-cyan-100;
+  }
+
+  .btn {
+    @apply inline-flex min-h-10 items-center justify-center gap-2 rounded-md border border-ink bg-ink px-3 py-2 text-sm font-bold text-white transition;
+  }
+
+  .btn:hover {
+    @apply -translate-y-0.5 bg-slate-800;
+  }
+
+  .btn:disabled {
+    @apply translate-y-0 cursor-not-allowed border-slate-300 bg-slate-200 text-slate-500;
+  }
+
+  .icon-btn {
+    @apply grid h-9 w-9 place-items-center rounded-md border border-slate-200 bg-white text-slate-600 transition;
+  }
+
+  .icon-btn:hover {
+    @apply border-red-200 bg-red-50 text-red-700;
+  }
+
+  .badge {
+    @apply rounded-md border border-cyan-200 bg-cyan-50 px-2 py-1 text-xs font-bold uppercase text-cyan-800;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    scroll-behavior: auto !important;
+    transition-duration: 0.01ms !important;
+  }
+}
