@@ -90,7 +90,13 @@ export function createRouter(repo: Repository) {
     const email = String(req.body?.email ?? "").trim();
     const password = String(req.body?.password ?? "");
     const inviteCode = String(req.body?.inviteCode ?? "");
-    if (process.env.INVITE_CODE && inviteCode !== process.env.INVITE_CODE) {
+    // Fail closed: when auth is on but no invite code is configured, registration
+    // is CLOSED (a missing INVITE_CODE must never mean "anyone may register").
+    if (!process.env.INVITE_CODE) {
+      res.status(403).json({ error: "Registration is closed. Ask the owner for an invite." });
+      return;
+    }
+    if (inviteCode !== process.env.INVITE_CODE) {
       res.status(403).json({ error: "Invalid invite code" });
       return;
     }
