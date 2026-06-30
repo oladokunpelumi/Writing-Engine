@@ -94,7 +94,10 @@ const modelProfiles: Record<ModelProfile, Partial<Record<PromptStage, string>>> 
 
 export function modelProfile(): ModelProfile {
   const value = process.env.MODEL_PROFILE;
-  return value === "cost-first" || value === "premium" ? value : "balanced";
+  if (value === "balanced" || value === "premium" || value === "cost-first") return value;
+  // Default: cost-first — bakeoff-validated cheap models on every stage but the
+  // manual Deep Sharpen panel. Switch via MODEL_PROFILE or the Labs control.
+  return "cost-first";
 }
 
 export function aiProvider() {

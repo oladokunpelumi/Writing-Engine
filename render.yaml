@@ -30,44 +30,16 @@ services:
         value: https://openrouter.ai/api/v1
       - key: MAX_OUTPUT_TOKENS
         value: "4000"
-      # --- Per-stage model routing (balanced ladder; explicit vars override MODEL_PROFILE) ---
+      # --- Model routing ---
+      # The profile drives every text stage (cost-first = bakeoff-validated cheap
+      # models everywhere but the manual Deep Sharpen panel). Leave per-stage
+      # MODEL_* UNSET so the profile + the Labs switch are the single source of
+      # truth; set an individual MODEL_<STAGE> only to pin one stage to a model.
       - key: MODEL_PROFILE
-        value: balanced
-      - key: MODEL_FRAME
-        value: z-ai/glm-5.2
-      - key: MODEL_DRAFT
-        value: anthropic/claude-sonnet-4.6
-      - key: MODEL_SHARPEN
-        value: anthropic/claude-sonnet-4.6
-      - key: MODEL_DISCOVER
-        value: google/gemini-3.1-flash-lite
-      - key: MODEL_SEO
-        value: google/gemini-3.1-flash-lite
-      - key: MODEL_REPURPOSE
-        value: anthropic/claude-sonnet-4.6
-      - key: MODEL_REFINE
-        value: anthropic/claude-sonnet-4.6
+        value: cost-first
       - key: MODEL_IMAGE
         value: google/gemini-3-pro-image
       - key: MODEL_SWARM
-        value: google/gemini-3.1-flash-lite
-      - key: MODEL_VISUAL_PROMPT
-        value: google/gemini-3.1-flash-lite
-      - key: MODEL_SIGNALS_DEEPDIVE
-        value: z-ai/glm-5.2
-      - key: MODEL_SIGNALS_MACRO
-        value: google/gemini-3.1-flash-lite
-      - key: MODEL_FINTEL_BRIDGE
-        value: z-ai/glm-5.2
-      - key: MODEL_SYNTHESIS
-        value: anthropic/claude-sonnet-4.6
-      - key: MODEL_REVIEWGATE
-        value: z-ai/glm-5.2
-      - key: MODEL_STORY
-        value: anthropic/claude-sonnet-4.6
-      - key: MODEL_CRITIC
-        value: anthropic/claude-sonnet-4.6
-      - key: MODEL_STUDY_SKILL
         value: google/gemini-3.1-flash-lite
       - key: EMBED_MODEL
         value: openai/text-embedding-3-small

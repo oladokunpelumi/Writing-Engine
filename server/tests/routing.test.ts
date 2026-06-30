@@ -33,8 +33,8 @@ describe("model routing", () => {
   it("uses the stage env var, then the selected profile", () => {
     process.env.MODEL_FRAME = "google/gemini-3.5-flash";
     process.env.MODEL_DRAFT = "anthropic/claude-sonnet-4.6";
-    expect(modelFor("frame")).toBe("google/gemini-3.5-flash");
-    expect(modelFor("story")).toBe("anthropic/claude-sonnet-4.6");
+    expect(modelFor("frame")).toBe("google/gemini-3.5-flash"); // explicit per-stage env wins
+    expect(modelFor("story")).toBe("z-ai/glm-5.2"); // no MODEL_STORY → default (cost-first) profile, not the MODEL_DRAFT fallback
     delete process.env.MODEL_DRAFT;
     delete process.env.MODEL_FRAME;
     expect(modelFor("frame")).toBe("z-ai/glm-5.2");
@@ -50,7 +50,7 @@ describe("model routing", () => {
     process.env.MODEL_PROFILE = "cost-first";
     expect(modelFor("draft")).toBe("z-ai/glm-5.2");
     process.env.MODEL_PROFILE = "unknown";
-    expect(modelProfile()).toBe("balanced");
+    expect(modelProfile()).toBe("cost-first"); // default profile
   });
 
   it("retries empty visible output once on MODEL_DRAFT", async () => {
