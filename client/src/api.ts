@@ -71,6 +71,13 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
 
 export const api = {
   health: () => request<{ ok: boolean; aiProvider: string; vectorRetrievalEnabled: boolean; authRequired: boolean }>("/api/health"),
+  modelProfile: () => request<{ profile: "cost-first" | "balanced" | "premium" }>("/api/model-profile"),
+  setModelProfile: (profile: "cost-first" | "balanced" | "premium") =>
+    request<{ profile: "cost-first" | "balanced" | "premium" }>("/api/model-profile", {
+      method: "PUT",
+      headers: jsonHeaders,
+      body: JSON.stringify({ profile })
+    }),
   register: (email: string, password: string, inviteCode: string) =>
     request<{ token: string; email: string }>("/api/auth/register", {
       method: "POST",

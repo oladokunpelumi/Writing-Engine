@@ -1,7 +1,7 @@
 // Embedding + similarity helpers for semantic retrieval.
 //
 // Vectors are produced via OpenRouter's embeddings endpoint and stored as JSON
-// in SQLite (see repository.savePostEmbedding). Cosine similarity is computed
+// in Postgres/pglite (see repository.savePostEmbedding). Cosine similarity is computed
 // in-process. For a personal/design-partner-scale archive (hundreds of posts)
 // this is fast and dependency-free; the same retrieve() interface can later be
 // backed by pgvector without changing callers.
@@ -22,7 +22,7 @@ export async function embedTexts(inputs: string[]): Promise<number[][]> {
       "Content-Type": "application/json",
       Authorization: `Bearer ${process.env.OPENROUTER_API_KEY}`,
       "HTTP-Referer": "http://localhost:5173",
-      "X-Title": "Gbedu Desk"
+      "X-Title": "Co-Create"
     },
     body: JSON.stringify({ model: embedModel(), input: inputs })
   });

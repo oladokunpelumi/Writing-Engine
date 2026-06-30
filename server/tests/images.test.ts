@@ -1,9 +1,8 @@
-import { existsSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { generateImage, imageStyleDirective, mockImage, persistImage } from "../src/images";
+import { generateImage, imageStyleDirective, mockImage } from "../src/images";
 import { buildImageConcept, extractBeats } from "../src/openrouter";
+import { openDatabase } from "../src/db";
+import { Repository } from "../src/repository";
 
 let previousKey: string | undefined;
 beforeEach(() => {
@@ -54,30 +53,31 @@ describe("buildImageConcept (offline)", () => {
   });
 });
 
-describe("persistImage", () => {
-  it("passes through svg data URLs and served paths unchanged", () => {
-    const svg = mockImage("a cover");
-    expect(persistImage(svg)).toBe(svg);
-    expect(persistImage("/api/images/abc.png")).toBe("/api/images/abc.png");
-    expect(persistImage("https://example.com/x.png")).toBe("https://example.com/x.png");
+describe("images in Postgres", () => {
+  // 1x1 transparent PNG
+  const b64 = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==";
+
+  it("saveImage stores base64 bytes and getImageBlob round-trips them", async () => {
+    const repo = new Repository(await openDatabase());
+    const asset = await repo.saveImage({
+      prompt: "a cover",
+      url: `data:image/png;base64,${b64}`,
+      provider: "openrouter",
+      role: "cover",
+      style: "editorial"
+    });
+    expect(asset.url).toMatch(/^\/api\/images\/[0-9a-f-]+$/);
+    const blob = await repo.getImageBlob(asset.id);
+    expect(blob?.mime).toBe("image/png");
+    expect(blob?.data.equals(Buffer.from(b64, "base64"))).toBe(true);
   });
 
-  it("writes a base64 PNG to disk and returns a served path", () => {
-    const dir = join(tmpdir(), `gbedu-img-test-${process.pid}`);
-    const prev = process.env.IMAGE_DIR;
-    process.env.IMAGE_DIR = dir;
-    try {
-      // 1x1 transparent PNG
-      const b64 =
-        "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==";
-      const result = persistImage(`data:image/png;base64,${b64}`);
-      expect(result).toMatch(/^\/api\/images\/[a-f0-9]+\.png$/);
-      expect(existsSync(join(dir, result.replace("/api/images/", "")))).toBe(true);
-    } finally {
-      rmSync(dir, { recursive: true, force: true });
-      if (prev === undefined) delete process.env.IMAGE_DIR;
-      else process.env.IMAGE_DIR = prev;
-    }
+  it("passes through svg/mock data URLs unchanged (no bytes stored)", async () => {
+    const repo = new Repository(await openDatabase());
+    const svg = mockImage("a cover");
+    const asset = await repo.saveImage({ prompt: "a cover", url: svg, provider: "mock" });
+    expect(asset.url).toBe(svg);
+    expect(await repo.getImageBlob(asset.id)).toBeUndefined();
   });
 });
 

@@ -99,11 +99,11 @@ export function selectDoctrine(params?: RefineParams, overrides: Record<string, 
 
 // Seed the doctrine into the current owner's Corpus once (idempotent), so it is
 // visible and editable in the Corpus tab.
-export function ensureRefinerDoctrine(repo: Repository) {
-  if (repo.listCorpusSources().some((source) => source.path === SOURCE_PATH)) return;
+export async function ensureRefinerDoctrine(repo: Repository) {
+  if ((await repo.listCorpusSources()).some((source) => source.path === SOURCE_PATH)) return;
   const all = Object.values(REFINER_DOCTRINE).map((entry) => entry.body).join("\n");
   const entries = Object.entries(REFINER_DOCTRINE);
-  const source = repo.upsertCorpusSource({
+  const source = await repo.upsertCorpusSource({
     path: SOURCE_PATH,
     name: "Article Refiner doctrine",
     checksum: createHash("sha256").update(all).digest("hex"),
@@ -111,7 +111,7 @@ export function ensureRefinerDoctrine(repo: Repository) {
   });
   for (const [name, entry] of entries) {
     const lineEnd = Math.max(1, entry.body.split("\n").length);
-    repo.upsertCorpusSegment(source.id, {
+    await repo.upsertCorpusSegment(source.id, {
       sourcePath: `${SOURCE_PATH}/references/${name}.md`,
       title: entry.title,
       body: entry.body,
@@ -135,10 +135,10 @@ export function ensureRefinerDoctrine(repo: Repository) {
 
 // Ensure the doctrine is in the Corpus, then return the relevant slice for this
 // refine request — preferring the owner's edited Corpus copies over built-ins.
-export function refinerDoctrineFor(repo: Repository, params?: RefineParams): string {
-  ensureRefinerDoctrine(repo);
+export async function refinerDoctrineFor(repo: Repository, params?: RefineParams): Promise<string> {
+  await ensureRefinerDoctrine(repo);
   const overrides: Record<string, string> = {};
-  for (const segment of repo.listCorpusSegments()) {
+  for (const segment of await repo.listCorpusSegments()) {
     if (!segment.sourcePath.startsWith(`${SOURCE_PATH}/references/`)) continue;
     const name = segment.sourcePath.replace(`${SOURCE_PATH}/references/`, "").replace(/\.md$/, "");
     overrides[name] = segment.body;

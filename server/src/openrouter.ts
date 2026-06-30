@@ -22,14 +22,80 @@ const modelEnv: Partial<Record<PromptStage, string>> = {
   image: "MODEL_IMAGE",
   repurpose: "MODEL_REPURPOSE",
   refine: "MODEL_REFINE",
+  "visual-prompt": "MODEL_VISUAL_PROMPT",
   "signals-deepdive": "MODEL_SIGNALS_DEEPDIVE",
   "signals-macro": "MODEL_SIGNALS_MACRO",
   "fintel-bridge": "MODEL_FINTEL_BRIDGE",
   synthesis: "MODEL_SYNTHESIS",
   reviewgate: "MODEL_REVIEWGATE",
   story: "MODEL_STORY",
-  critic: "MODEL_CRITIC"
+  critic: "MODEL_CRITIC",
+  "study-skill": "MODEL_STUDY_SKILL"
 };
+
+type ModelProfile = "cost-first" | "balanced" | "premium";
+
+const modelProfiles: Record<ModelProfile, Partial<Record<PromptStage, string>>> = {
+  "cost-first": {
+    frame: "z-ai/glm-5.2",
+    draft: "z-ai/glm-5.2",
+    sharpen: "z-ai/glm-5.2",
+    refine: "z-ai/glm-5.2",
+    repurpose: "google/gemini-3.1-flash-lite",
+    discover: "google/gemini-3.1-flash-lite",
+    seo: "google/gemini-3.1-flash-lite",
+    "visual-prompt": "google/gemini-3.1-flash-lite",
+    "signals-deepdive": "z-ai/glm-5.2",
+    "signals-macro": "google/gemini-3.1-flash-lite",
+    "fintel-bridge": "z-ai/glm-5.2",
+    synthesis: "z-ai/glm-5.2",
+    reviewgate: "z-ai/glm-5.2",
+    story: "z-ai/glm-5.2",
+    critic: "z-ai/glm-5.2",
+    "study-skill": "google/gemini-3.1-flash-lite"
+  },
+  balanced: {
+    frame: "z-ai/glm-5.2",
+    draft: "anthropic/claude-sonnet-4.6",
+    sharpen: "anthropic/claude-sonnet-4.6",
+    refine: "anthropic/claude-sonnet-4.6",
+    repurpose: "anthropic/claude-sonnet-4.6",
+    discover: "google/gemini-3.1-flash-lite",
+    seo: "google/gemini-3.1-flash-lite",
+    "visual-prompt": "google/gemini-3.1-flash-lite",
+    "signals-deepdive": "z-ai/glm-5.2",
+    "signals-macro": "google/gemini-3.1-flash-lite",
+    "fintel-bridge": "z-ai/glm-5.2",
+    synthesis: "anthropic/claude-sonnet-4.6",
+    reviewgate: "z-ai/glm-5.2",
+    story: "anthropic/claude-sonnet-4.6",
+    critic: "anthropic/claude-sonnet-4.6",
+    "study-skill": "google/gemini-3.1-flash-lite"
+  },
+  premium: {
+    frame: "anthropic/claude-sonnet-4.6",
+    draft: "anthropic/claude-sonnet-4.6",
+    sharpen: "anthropic/claude-opus-4.8",
+    refine: "anthropic/claude-sonnet-4.6",
+    repurpose: "anthropic/claude-sonnet-4.6",
+    discover: "z-ai/glm-5.2",
+    seo: "z-ai/glm-5.2",
+    "visual-prompt": "anthropic/claude-sonnet-4.6",
+    "signals-deepdive": "anthropic/claude-sonnet-4.6",
+    "signals-macro": "z-ai/glm-5.2",
+    "fintel-bridge": "anthropic/claude-sonnet-4.6",
+    synthesis: "anthropic/claude-sonnet-4.6",
+    reviewgate: "anthropic/claude-sonnet-4.6",
+    story: "anthropic/claude-opus-4.8",
+    critic: "anthropic/claude-opus-4.8",
+    "study-skill": "anthropic/claude-sonnet-4.6"
+  }
+};
+
+export function modelProfile(): ModelProfile {
+  const value = process.env.MODEL_PROFILE;
+  return value === "cost-first" || value === "premium" ? value : "balanced";
+}
 
 export function aiProvider() {
   return process.env.OPENROUTER_API_KEY ? "openrouter" : "mock";
@@ -37,7 +103,7 @@ export function aiProvider() {
 
 export function modelFor(stage: PromptStage) {
   const key = modelEnv[stage];
-  return (key && process.env[key]) || process.env.MODEL_DRAFT || "openrouter/auto";
+  return (key && process.env[key]) || modelProfiles[modelProfile()][stage] || process.env.MODEL_DRAFT || "openrouter/auto";
 }
 
 // ---- Fusion (OpenRouter server tool: parallel model panel + judge) ----
@@ -478,7 +544,7 @@ function toUsage(raw: unknown): Usage | undefined {
 
 export function systemPrompt(voice: VoiceProfile) {
   return [
-    "You are Gbedu Desk, a single-author writing engine.",
+    "You are Co-Create, a single-author writing engine.",
     "Write in the author's locked voice.",
     `Pillars: ${voice.pillars.join("; ")}`,
     `Register: ${voice.register}`,
@@ -569,7 +635,7 @@ function requestBody(model: string, system: string, user: string, stream: boolea
   } else if (plan.useWeb) {
     body.plugins = [webPlugin()];
   }
-  return JSON.stringify(body);
+  return body;
 }
 
 function headers() {
@@ -577,8 +643,44 @@ function headers() {
     "Content-Type": "application/json",
     Authorization: `Bearer ${process.env.OPENROUTER_API_KEY}`,
     "HTTP-Referer": "http://localhost:5173",
-    "X-Title": "Gbedu Desk"
+    "X-Title": "Co-Create"
   };
+}
+
+const EMPTY_VISIBLE_DRAFT_ERROR =
+  "The model returned no visible draft. Try again or switch the stage to the stable route.";
+
+type ChatCompletionData = { choices?: Array<{ message?: { content?: string } }>; usage?: unknown };
+
+function visibleContent(data: ChatCompletionData) {
+  const content = data.choices?.[0]?.message?.content;
+  return content && content.trim().length > 0 ? content : undefined;
+}
+
+async function postChatCompletion(body: Record<string, unknown>) {
+  const response = await fetch(`${process.env.OPENROUTER_BASE_URL ?? "https://openrouter.ai/api/v1"}/chat/completions`, {
+    method: "POST",
+    headers: headers(),
+    body: JSON.stringify(body)
+  });
+  if (!response.ok) {
+    const message = await response.text();
+    throw new Error(`OpenRouter request failed: ${response.status} ${message}`);
+  }
+  return (await response.json()) as ChatCompletionData;
+}
+
+async function chatWithEmptyGuard(body: Record<string, unknown>): Promise<{ content: string; usage?: Usage }> {
+  const data = await postChatCompletion(body);
+  const content = visibleContent(data);
+  if (content) return { content, usage: toUsage(data.usage) };
+
+  const retryBody = { ...body, model: process.env.MODEL_DRAFT || modelProfiles.balanced.draft || "openrouter/auto" };
+  const retryData = await postChatCompletion(retryBody);
+  const retryContent = visibleContent(retryData);
+  if (retryContent) return { content: retryContent, usage: toUsage(retryData.usage) };
+
+  throw new Error(EMPTY_VISIBLE_DRAFT_ERROR);
 }
 
 // Low-level call with an explicit model + temperature and a prompt-cached system
@@ -600,19 +702,7 @@ export async function rawChat(opts: {
     usage: { include: true }
   };
   if (opts.temperature !== undefined) body.temperature = opts.temperature;
-  const response = await fetch(`${process.env.OPENROUTER_BASE_URL ?? "https://openrouter.ai/api/v1"}/chat/completions`, {
-    method: "POST",
-    headers: headers(),
-    body: JSON.stringify(body)
-  });
-  if (!response.ok) {
-    const message = await response.text();
-    throw new Error(`OpenRouter request failed: ${response.status} ${message}`);
-  }
-  const data = (await response.json()) as { choices?: Array<{ message?: { content?: string } }>; usage?: unknown };
-  const content = data.choices?.[0]?.message?.content;
-  if (!content) throw new Error("OpenRouter returned no content");
-  return { content, usage: toUsage(data.usage) };
+  return chatWithEmptyGuard(body);
 }
 
 async function chat(
@@ -622,19 +712,7 @@ async function chat(
   stage?: PromptStage,
   forceFusion?: boolean
 ): Promise<{ content: string; usage?: Usage }> {
-  const response = await fetch(`${process.env.OPENROUTER_BASE_URL ?? "https://openrouter.ai/api/v1"}/chat/completions`, {
-    method: "POST",
-    headers: headers(),
-    body: requestBody(model, system, user, false, stage, forceFusion)
-  });
-  if (!response.ok) {
-    const message = await response.text();
-    throw new Error(`OpenRouter request failed: ${response.status} ${message}`);
-  }
-  const data = (await response.json()) as { choices?: Array<{ message?: { content?: string } }>; usage?: unknown };
-  const content = data.choices?.[0]?.message?.content;
-  if (!content) throw new Error("OpenRouter returned no content");
-  return { content, usage: toUsage(data.usage) };
+  return chatWithEmptyGuard(requestBody(model, system, user, false, stage, forceFusion));
 }
 
 // Streaming variant: parses OpenAI-compatible SSE chunks, forwards each token to
@@ -649,7 +727,7 @@ export async function chatStream(
   const response = await fetch(`${process.env.OPENROUTER_BASE_URL ?? "https://openrouter.ai/api/v1"}/chat/completions`, {
     method: "POST",
     headers: headers(),
-    body: requestBody(model, system, user, true, stage)
+    body: JSON.stringify(requestBody(model, system, user, true, stage))
   });
   if (!response.ok || !response.body) {
     const message = await response.text().catch(() => "");
@@ -684,6 +762,19 @@ export async function chatStream(
       }
     }
   }
-  if (!full) throw new Error("OpenRouter stream returned no content");
+  if (!full.trim()) {
+    // Empty / reasoning-only stream — apply the same guard as the non-streaming
+    // path: retry once on the safe fallback model (non-streamed), push the recovered
+    // draft through onToken so the client still receives it, else surface the
+    // branded error instead of a blank result.
+    const fallbackModel = process.env.MODEL_DRAFT || modelProfiles.balanced.draft || "openrouter/auto";
+    const retry = await postChatCompletion(requestBody(fallbackModel, system, user, false, stage));
+    const recovered = visibleContent(retry);
+    if (recovered) {
+      onToken(recovered);
+      return { content: recovered, usage: toUsage(retry.usage) };
+    }
+    throw new Error(EMPTY_VISIBLE_DRAFT_ERROR);
+  }
   return { content: full, usage };
 }

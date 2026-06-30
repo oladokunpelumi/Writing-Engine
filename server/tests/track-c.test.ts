@@ -5,33 +5,33 @@ import { ownerContext } from "../src/context";
 import { hashPassword, signToken, verifyPassword, verifyToken } from "../src/auth";
 import { buildPreviousInputsPreview } from "../src/importPipeline";
 
-function freshRepo() {
-  return new Repository(openDatabase(":memory:"));
+async function freshRepo() {
+  return new Repository(await openDatabase());
 }
 
 describe("per-owner isolation", () => {
-  it("keeps each owner's posts separate", () => {
-    const repo = freshRepo();
-    ownerContext.run("alice", () => repo.createPost({ title: "Alice note", body: "alice body", status: "draft", tags: [] }));
-    ownerContext.run("bob", () => repo.createPost({ title: "Bob note", body: "bob body", status: "draft", tags: [] }));
-    const alicePosts = ownerContext.run("alice", () => repo.listPosts());
-    const bobPosts = ownerContext.run("bob", () => repo.listPosts());
+  it("keeps each owner's posts separate", async () => {
+    const repo = await freshRepo();
+    await ownerContext.run("alice", () => repo.createPost({ title: "Alice note", body: "alice body", status: "draft", tags: [] }));
+    await ownerContext.run("bob", () => repo.createPost({ title: "Bob note", body: "bob body", status: "draft", tags: [] }));
+    const alicePosts = await ownerContext.run("alice", () => repo.listPosts());
+    const bobPosts = await ownerContext.run("bob", () => repo.listPosts());
     expect(alicePosts.map((p) => p.title)).toEqual(["Alice note"]);
     expect(bobPosts.map((p) => p.title)).toEqual(["Bob note"]);
   });
 
-  it("gives each owner an independent active voice", () => {
-    const repo = freshRepo();
-    const aliceVoice = ownerContext.run("alice", () => repo.getVoice());
-    const bobVoice = ownerContext.run("bob", () => repo.getVoice());
+  it("gives each owner an independent active voice", async () => {
+    const repo = await freshRepo();
+    const aliceVoice = await ownerContext.run("alice", () => repo.getVoice());
+    const bobVoice = await ownerContext.run("bob", () => repo.getVoice());
     expect(aliceVoice.id).not.toBe(bobVoice.id);
-    ownerContext.run("alice", () => {
-      const created = repo.createVoice("Faith essays");
-      repo.setActiveVoice(created.id);
-      expect(repo.getVoice().name).toBe("Faith essays");
+    await ownerContext.run("alice", async () => {
+      const created = await repo.createVoice("Faith essays");
+      await repo.setActiveVoice(created.id);
+      expect((await repo.getVoice()).name).toBe("Faith essays");
     });
     // bob is unaffected
-    expect(ownerContext.run("bob", () => repo.getVoice().name)).toBe("Default");
+    expect(await ownerContext.run("bob", async () => (await repo.getVoice()).name)).toBe("Default");
   });
 });
 

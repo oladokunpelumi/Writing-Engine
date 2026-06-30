@@ -1,21 +1,21 @@
-# Render Blueprint — one Docker web service + a persistent disk for SQLite + images.
-# Deploy: push to GitHub, then in Render → New → Blueprint, pick this repo.
-# Secrets marked `sync: false` are entered once in the dashboard (never committed).
-# NOTE: persistent disks require a paid instance type (Starter+); the free tier
-# has an ephemeral filesystem and would wipe your library on each deploy.
+# Render Blueprint (SECONDARY — primary deploy target is Railway; see DEPLOY.md).
+# Co-Create uses managed Postgres (no disk). On Render, add a PostgreSQL instance and
+# wire its connection string into DATABASE_URL below. Secrets (`sync: false`) are
+# entered once in the dashboard. Images + data live in Postgres, so no volume.
 services:
   - type: web
-    name: writing-engine
+    name: co-create
     runtime: docker
     dockerfilePath: ./Dockerfile
     plan: starter
     healthCheckPath: /api/health
     autoDeploy: true
-    disk:
-      name: data
-      mountPath: /data
-      sizeGB: 1
     envVars:
+      # --- Datastore (managed Postgres) ---
+      - key: DATABASE_URL
+        sync: false
+      - key: DATABASE_SSL
+        value: require
       # --- Access control (invite-only) ---
       - key: AUTH_REQUIRED
         value: "true"
@@ -23,11 +23,6 @@ services:
         generateValue: true
       - key: INVITE_CODE
         sync: false
-      # --- Persistent storage (the mounted disk) ---
-      - key: DATABASE_PATH
-        value: /data/gbedu-desk.sqlite
-      - key: IMAGE_DIR
-        value: /data/images
       # --- OpenRouter (the only real secret + spend) ---
       - key: OPENROUTER_API_KEY
         sync: false
@@ -35,24 +30,44 @@ services:
         value: https://openrouter.ai/api/v1
       - key: MAX_OUTPUT_TOKENS
         value: "4000"
-      # --- Per-stage model routing (any OpenRouter slug; edit freely) ---
+      # --- Per-stage model routing (balanced ladder; explicit vars override MODEL_PROFILE) ---
+      - key: MODEL_PROFILE
+        value: balanced
       - key: MODEL_FRAME
-        value: google/gemini-3.5-flash
+        value: z-ai/glm-5.2
       - key: MODEL_DRAFT
         value: anthropic/claude-sonnet-4.6
       - key: MODEL_SHARPEN
-        value: anthropic/claude-opus-4.8
+        value: anthropic/claude-sonnet-4.6
       - key: MODEL_DISCOVER
-        value: google/gemini-3.5-flash
+        value: google/gemini-3.1-flash-lite
       - key: MODEL_SEO
-        value: google/gemini-3.5-flash
+        value: google/gemini-3.1-flash-lite
       - key: MODEL_REPURPOSE
         value: anthropic/claude-sonnet-4.6
       - key: MODEL_REFINE
         value: anthropic/claude-sonnet-4.6
       - key: MODEL_IMAGE
-        value: google/gemini-3-pro-image-preview
+        value: google/gemini-3-pro-image
       - key: MODEL_SWARM
+        value: google/gemini-3.1-flash-lite
+      - key: MODEL_VISUAL_PROMPT
+        value: google/gemini-3.1-flash-lite
+      - key: MODEL_SIGNALS_DEEPDIVE
+        value: z-ai/glm-5.2
+      - key: MODEL_SIGNALS_MACRO
+        value: google/gemini-3.1-flash-lite
+      - key: MODEL_FINTEL_BRIDGE
+        value: z-ai/glm-5.2
+      - key: MODEL_SYNTHESIS
+        value: anthropic/claude-sonnet-4.6
+      - key: MODEL_REVIEWGATE
+        value: z-ai/glm-5.2
+      - key: MODEL_STORY
+        value: anthropic/claude-sonnet-4.6
+      - key: MODEL_CRITIC
+        value: anthropic/claude-sonnet-4.6
+      - key: MODEL_STUDY_SKILL
         value: google/gemini-3.1-flash-lite
       - key: EMBED_MODEL
         value: openai/text-embedding-3-small
@@ -64,7 +79,7 @@ services:
       - key: FUSION_STAGES
         value: ""
       - key: FUSION_PANEL
-        value: google/gemini-3.1-flash-lite,openai/gpt-5.4-mini
+        value: z-ai/glm-5.2,anthropic/claude-sonnet-4.6,anthropic/claude-opus-4.8
       # --- Web-search plugin defaults (used by The Grid macro stage) ---
       - key: WEB_ENGINE
         value: exa

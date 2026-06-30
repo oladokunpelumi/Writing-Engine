@@ -1,331 +1,374 @@
-import { mkdirSync } from "node:fs";
-import { dirname, resolve } from "node:path";
-import { DatabaseSync } from "node:sqlite";
+import type { Pool as PgPool } from "pg";
 
-export function openDatabase(path = process.env.DATABASE_PATH ?? ".data/gbedu-desk.sqlite") {
-  const dbPath = path === ":memory:" ? path : resolve(process.cwd(), path);
-  if (dbPath !== ":memory:") {
-    mkdirSync(dirname(dbPath), { recursive: true });
+// Async storage adapter with two backends, same Postgres dialect:
+//   - production: node-postgres `Pool` when DATABASE_URL is set (Railway managed PG)
+//   - dev / tests: @electric-sql/pglite (in-process Postgres, WASM) — file dir or in-memory
+// The repository keeps writing `?`-placeholder SQL; `prepare()` rewrites `?` → `$n`,
+// so the sync→async migration touched call shape (await) far more than SQL text.
+
+interface RawDb {
+  query(sql: string, params?: unknown[]): Promise<{ rows: any[] }>;
+  exec?(sql: string): Promise<unknown>;
+}
+
+export interface Prepared {
+  run(...args: unknown[]): Promise<void>;
+  get<T = any>(...args: unknown[]): Promise<T | undefined>;
+  all<T = any>(...args: unknown[]): Promise<T[]>;
+}
+
+export interface AppDatabase {
+  prepare(sql: string): Prepared;
+  exec(sql: string): Promise<void>;
+}
+
+function toPg(sql: string): string {
+  let i = 0;
+  return sql.replace(/\?/g, () => `$${++i}`);
+}
+
+export async function openDatabase(): Promise<AppDatabase> {
+  const url = process.env.DATABASE_URL;
+  let raw: RawDb;
+
+  if (url) {
+    const { Pool } = await import("pg");
+    const pool: PgPool = new Pool({
+      connectionString: url,
+      ssl: process.env.DATABASE_SSL === "require" ? { rejectUnauthorized: false } : undefined
+    });
+    raw = { query: (sql, params) => pool.query(sql, params as unknown[]) };
+  } else {
+    const { PGlite } = await import("@electric-sql/pglite");
+    const dir = process.env.PGLITE_PATH; // undefined => ephemeral in-memory (tests)
+    const lite = new PGlite(dir);
+    raw = {
+      query: (sql, params) => lite.query(sql, params as unknown[]) as Promise<{ rows: any[] }>,
+      exec: (sql) => lite.exec(sql)
+    };
   }
-  const db = new DatabaseSync(dbPath);
-  db.exec("PRAGMA journal_mode = WAL;");
-  db.exec("PRAGMA foreign_keys = ON;");
-  migrate(db);
+
+  const db: AppDatabase = {
+    prepare(sql: string): Prepared {
+      const pg = toPg(sql);
+      return {
+        run: async (...args) => {
+          await raw.query(pg, args);
+        },
+        get: async (...args) => (await raw.query(pg, args)).rows[0],
+        all: async (...args) => (await raw.query(pg, args)).rows
+      };
+    },
+    exec: async (sql: string) => {
+      if (raw.exec) await raw.exec(sql);
+      else await raw.query(sql);
+    }
+  };
+
+  await migrate(db);
   return db;
 }
 
-export type AppDatabase = DatabaseSync;
-
-function migrate(db: DatabaseSync) {
-  db.exec(`
+async function migrate(db: AppDatabase) {
+  await db.exec(`
     CREATE TABLE IF NOT EXISTS kv (
-      key TEXT PRIMARY KEY,
-      value TEXT NOT NULL
+      key text PRIMARY KEY,
+      value text NOT NULL
     );
 
     CREATE TABLE IF NOT EXISTS posts (
-      id TEXT PRIMARY KEY,
-      title TEXT NOT NULL,
-      body TEXT NOT NULL,
-      status TEXT NOT NULL,
-      tags TEXT NOT NULL,
-      word_count INTEGER NOT NULL,
-      source_url TEXT,
-      cover_image_url TEXT,
-      seo TEXT,
-      created_at TEXT NOT NULL,
-      updated_at TEXT NOT NULL,
-      published_at TEXT
+      id text PRIMARY KEY,
+      owner_id text NOT NULL DEFAULT 'owner-default',
+      title text NOT NULL,
+      body text NOT NULL,
+      status text NOT NULL,
+      tags text NOT NULL,
+      word_count integer NOT NULL,
+      reading_order integer,
+      source_url text,
+      cover_image_url text,
+      seo text,
+      created_at text NOT NULL,
+      updated_at text NOT NULL,
+      published_at text
     );
 
     CREATE TABLE IF NOT EXISTS topic_ideas (
-      id TEXT PRIMARY KEY,
-      type TEXT NOT NULL,
-      title TEXT NOT NULL,
-      angle TEXT NOT NULL,
-      rationale TEXT NOT NULL,
-      source_post_id TEXT,
-      created_at TEXT NOT NULL
+      id text PRIMARY KEY,
+      owner_id text NOT NULL DEFAULT 'owner-default',
+      type text NOT NULL,
+      title text NOT NULL,
+      angle text NOT NULL,
+      rationale text NOT NULL,
+      source_post_id text,
+      series text,
+      series_order integer,
+      created_at text NOT NULL
     );
 
     CREATE TABLE IF NOT EXISTS seo_packages (
-      id TEXT PRIMARY KEY,
-      post_id TEXT,
-      meta_title TEXT NOT NULL,
-      meta_description TEXT NOT NULL,
-      slug TEXT NOT NULL,
-      tags TEXT NOT NULL,
-      social_blurb TEXT NOT NULL,
-      created_at TEXT NOT NULL
+      id text PRIMARY KEY,
+      owner_id text NOT NULL DEFAULT 'owner-default',
+      post_id text,
+      meta_title text NOT NULL,
+      meta_description text NOT NULL,
+      slug text NOT NULL,
+      tags text NOT NULL,
+      social_blurb text NOT NULL,
+      created_at text NOT NULL
     );
 
     CREATE TABLE IF NOT EXISTS image_assets (
-      id TEXT PRIMARY KEY,
-      post_id TEXT,
-      prompt TEXT NOT NULL,
-      url TEXT NOT NULL,
-      provider TEXT NOT NULL,
-      created_at TEXT NOT NULL
+      id text PRIMARY KEY,
+      owner_id text NOT NULL DEFAULT 'owner-default',
+      post_id text,
+      prompt text NOT NULL,
+      url text NOT NULL,
+      provider text NOT NULL,
+      role text,
+      style text,
+      caption text,
+      data bytea,
+      mime text,
+      created_at text NOT NULL
     );
 
     CREATE TABLE IF NOT EXISTS schedule_entries (
-      id TEXT PRIMARY KEY,
-      post_id TEXT,
-      brief_id TEXT,
-      title TEXT NOT NULL,
-      target_date TEXT NOT NULL,
-      status TEXT NOT NULL,
-      reminder_channel TEXT NOT NULL,
-      reminder_sent INTEGER NOT NULL,
-      checklist TEXT NOT NULL,
-      created_at TEXT NOT NULL,
-      updated_at TEXT NOT NULL
+      id text PRIMARY KEY,
+      owner_id text NOT NULL DEFAULT 'owner-default',
+      post_id text,
+      brief_id text,
+      title text NOT NULL,
+      target_date text NOT NULL,
+      status text NOT NULL,
+      reminder_channel text NOT NULL,
+      reminder_sent integer NOT NULL,
+      checklist text NOT NULL,
+      created_at text NOT NULL,
+      updated_at text NOT NULL
     );
 
     CREATE TABLE IF NOT EXISTS generations (
-      id TEXT PRIMARY KEY,
-      brief_json TEXT NOT NULL,
-      frame_output TEXT,
-      draft_output TEXT,
-      critique_output TEXT,
-      final_output TEXT,
-      model_frame TEXT,
-      model_draft TEXT,
-      model_sharpen TEXT,
-      tokens_used INTEGER,
-      cache_hits INTEGER,
-      created_at TEXT NOT NULL
+      id text PRIMARY KEY,
+      brief_json text NOT NULL,
+      frame_output text,
+      draft_output text,
+      critique_output text,
+      final_output text,
+      model_frame text,
+      model_draft text,
+      model_sharpen text,
+      tokens_used integer,
+      cache_hits integer,
+      created_at text NOT NULL
     );
 
     CREATE TABLE IF NOT EXISTS import_batches (
-      id TEXT PRIMARY KEY,
-      source TEXT NOT NULL,
-      posts_imported INTEGER NOT NULL,
-      prompts_imported INTEGER NOT NULL,
-      references_imported INTEGER NOT NULL,
-      created_at TEXT NOT NULL
+      id text PRIMARY KEY,
+      source text NOT NULL,
+      posts_imported integer NOT NULL,
+      prompts_imported integer NOT NULL,
+      references_imported integer NOT NULL,
+      created_at text NOT NULL
     );
 
     CREATE TABLE IF NOT EXISTS prompt_templates (
-      id TEXT PRIMARY KEY,
-      stage TEXT NOT NULL UNIQUE,
-      name TEXT NOT NULL,
-      description TEXT NOT NULL,
-      active_version_id TEXT NOT NULL,
-      created_at TEXT NOT NULL,
-      updated_at TEXT NOT NULL
+      id text PRIMARY KEY,
+      stage text NOT NULL UNIQUE,
+      name text NOT NULL,
+      description text NOT NULL,
+      active_version_id text NOT NULL,
+      created_at text NOT NULL,
+      updated_at text NOT NULL
     );
 
     CREATE TABLE IF NOT EXISTS prompt_versions (
-      id TEXT PRIMARY KEY,
-      template_id TEXT NOT NULL,
-      version INTEGER NOT NULL,
-      body TEXT NOT NULL,
-      notes TEXT NOT NULL,
-      created_at TEXT NOT NULL,
+      id text PRIMARY KEY,
+      template_id text NOT NULL,
+      version integer NOT NULL,
+      body text NOT NULL,
+      notes text NOT NULL,
+      created_at text NOT NULL,
       UNIQUE(template_id, version)
     );
 
     CREATE TABLE IF NOT EXISTS voice_distillations (
-      id TEXT PRIMARY KEY,
-      source_post_ids TEXT NOT NULL,
-      traits TEXT NOT NULL,
-      structures TEXT NOT NULL,
-      rhythm TEXT NOT NULL,
-      metaphors TEXT NOT NULL,
-      theological_lenses TEXT NOT NULL,
-      weak_patterns TEXT NOT NULL,
-      exemplars TEXT NOT NULL,
-      created_at TEXT NOT NULL
+      id text PRIMARY KEY,
+      owner_id text NOT NULL DEFAULT 'owner-default',
+      source_post_ids text NOT NULL,
+      traits text NOT NULL,
+      structures text NOT NULL,
+      rhythm text NOT NULL,
+      metaphors text NOT NULL,
+      theological_lenses text NOT NULL,
+      weak_patterns text NOT NULL,
+      exemplars text NOT NULL,
+      created_at text NOT NULL
     );
 
     CREATE TABLE IF NOT EXISTS quality_reports (
-      id TEXT PRIMARY KEY,
-      generation_id TEXT,
-      text_hash TEXT NOT NULL,
-      vocabulary_violations TEXT NOT NULL,
-      structural_violations TEXT NOT NULL,
-      scores TEXT NOT NULL,
-      verdict TEXT NOT NULL,
-      summary TEXT NOT NULL,
-      created_at TEXT NOT NULL
+      id text PRIMARY KEY,
+      generation_id text,
+      text_hash text NOT NULL,
+      vocabulary_violations text NOT NULL,
+      structural_violations text NOT NULL,
+      scores text NOT NULL,
+      verdict text NOT NULL,
+      summary text NOT NULL,
+      created_at text NOT NULL
     );
 
     CREATE TABLE IF NOT EXISTS output_revisions (
-      id TEXT PRIMARY KEY,
-      generation_id TEXT,
-      report_id TEXT,
-      original_text TEXT NOT NULL,
-      revised_text TEXT NOT NULL,
-      created_at TEXT NOT NULL
+      id text PRIMARY KEY,
+      generation_id text,
+      report_id text,
+      original_text text NOT NULL,
+      revised_text text NOT NULL,
+      created_at text NOT NULL
     );
 
     CREATE TABLE IF NOT EXISTS generation_records (
-      id TEXT PRIMARY KEY,
-      stage TEXT NOT NULL,
-      content TEXT NOT NULL,
-      provider TEXT NOT NULL,
-      model TEXT NOT NULL,
-      prompt_version_id TEXT,
-      brief_json TEXT,
-      retrieved_post_ids TEXT NOT NULL,
-      corpus_segment_ids TEXT NOT NULL DEFAULT '[]',
-      citation_flags TEXT NOT NULL,
-      quality_report_id TEXT,
-      created_at TEXT NOT NULL
+      id text PRIMARY KEY,
+      owner_id text NOT NULL DEFAULT 'owner-default',
+      stage text NOT NULL,
+      content text NOT NULL,
+      provider text NOT NULL,
+      model text NOT NULL,
+      prompt_version_id text,
+      brief_json text,
+      retrieved_post_ids text NOT NULL,
+      corpus_segment_ids text NOT NULL DEFAULT '[]',
+      citation_flags text NOT NULL,
+      quality_report_id text,
+      prompt_tokens integer,
+      completion_tokens integer,
+      total_tokens integer,
+      cost double precision,
+      created_at text NOT NULL
     );
 
     CREATE TABLE IF NOT EXISTS corpus_sources (
-      id TEXT PRIMARY KEY,
-      path TEXT NOT NULL UNIQUE,
-      name TEXT NOT NULL,
-      checksum TEXT NOT NULL,
-      imported_at TEXT NOT NULL,
-      segment_count INTEGER NOT NULL
+      id text PRIMARY KEY,
+      owner_id text NOT NULL DEFAULT 'owner-default',
+      path text NOT NULL UNIQUE,
+      name text NOT NULL,
+      checksum text NOT NULL,
+      imported_at text NOT NULL,
+      segment_count integer NOT NULL
     );
 
     CREATE TABLE IF NOT EXISTS corpus_segments (
-      id TEXT PRIMARY KEY,
-      source_id TEXT NOT NULL,
-      source_path TEXT NOT NULL,
-      title TEXT NOT NULL,
-      body TEXT NOT NULL,
-      type TEXT NOT NULL,
-      memory_role TEXT NOT NULL,
-      tags TEXT NOT NULL,
-      line_start INTEGER NOT NULL,
-      line_end INTEGER NOT NULL,
-      confidence REAL NOT NULL,
-      embedding_status TEXT NOT NULL,
-      embedding_provider TEXT,
-      judge_readiness TEXT NOT NULL,
-      created_at TEXT NOT NULL,
-      updated_at TEXT NOT NULL,
+      id text PRIMARY KEY,
+      owner_id text NOT NULL DEFAULT 'owner-default',
+      source_id text NOT NULL,
+      source_path text NOT NULL,
+      title text NOT NULL,
+      body text NOT NULL,
+      type text NOT NULL,
+      memory_role text NOT NULL,
+      tags text NOT NULL,
+      line_start integer NOT NULL,
+      line_end integer NOT NULL,
+      confidence double precision NOT NULL,
+      embedding_status text NOT NULL,
+      embedding_provider text,
+      judge_readiness text NOT NULL,
+      created_at text NOT NULL,
+      updated_at text NOT NULL,
       UNIQUE(source_path, line_start, line_end)
     );
 
     CREATE TABLE IF NOT EXISTS brief_seeds (
-      id TEXT PRIMARY KEY,
-      corpus_segment_id TEXT UNIQUE,
-      title TEXT NOT NULL,
-      seed TEXT NOT NULL,
-      topic TEXT NOT NULL,
-      tension TEXT NOT NULL,
-      raw_notes TEXT NOT NULL,
-      tags TEXT NOT NULL,
-      source_line_range TEXT,
-      created_at TEXT NOT NULL,
-      updated_at TEXT NOT NULL
+      id text PRIMARY KEY,
+      owner_id text NOT NULL DEFAULT 'owner-default',
+      corpus_segment_id text UNIQUE,
+      title text NOT NULL,
+      seed text NOT NULL,
+      topic text NOT NULL,
+      tension text NOT NULL,
+      raw_notes text NOT NULL,
+      tags text NOT NULL,
+      source_line_range text,
+      created_at text NOT NULL,
+      updated_at text NOT NULL
     );
 
     CREATE TABLE IF NOT EXISTS workflow_recipes (
-      id TEXT PRIMARY KEY,
-      name TEXT NOT NULL UNIQUE,
-      description TEXT NOT NULL,
-      stages TEXT NOT NULL,
-      toggles TEXT NOT NULL,
-      judge_readiness TEXT NOT NULL,
-      created_at TEXT NOT NULL,
-      updated_at TEXT NOT NULL
+      id text PRIMARY KEY,
+      name text NOT NULL UNIQUE,
+      description text NOT NULL,
+      stages text NOT NULL,
+      toggles text NOT NULL,
+      judge_readiness text NOT NULL,
+      created_at text NOT NULL,
+      updated_at text NOT NULL
     );
 
     CREATE TABLE IF NOT EXISTS post_embeddings (
-      post_id TEXT NOT NULL,
-      model TEXT NOT NULL,
-      vector TEXT NOT NULL,
-      created_at TEXT NOT NULL,
+      post_id text NOT NULL,
+      model text NOT NULL,
+      vector text NOT NULL,
+      created_at text NOT NULL,
       PRIMARY KEY (post_id, model)
     );
 
     CREATE TABLE IF NOT EXISTS repurpose_packages (
-      id TEXT PRIMARY KEY,
-      post_id TEXT,
-      tweet_thread TEXT NOT NULL,
-      linkedin_post TEXT NOT NULL,
-      newsletter_teaser TEXT NOT NULL,
-      created_at TEXT NOT NULL
+      id text PRIMARY KEY,
+      owner_id text NOT NULL DEFAULT 'owner-default',
+      post_id text,
+      tweet_thread text NOT NULL,
+      linkedin_post text NOT NULL,
+      newsletter_teaser text NOT NULL,
+      created_at text NOT NULL
     );
 
     CREATE TABLE IF NOT EXISTS voice_profiles (
-      id TEXT PRIMARY KEY,
-      owner_id TEXT NOT NULL DEFAULT 'owner-default',
-      name TEXT NOT NULL,
-      profile TEXT NOT NULL,
-      created_at TEXT NOT NULL,
-      updated_at TEXT NOT NULL
+      id text PRIMARY KEY,
+      owner_id text NOT NULL DEFAULT 'owner-default',
+      name text NOT NULL,
+      profile text NOT NULL,
+      created_at text NOT NULL,
+      updated_at text NOT NULL
     );
 
     CREATE TABLE IF NOT EXISTS users (
-      id TEXT PRIMARY KEY,
-      email TEXT NOT NULL UNIQUE,
-      password_hash TEXT NOT NULL,
-      created_at TEXT NOT NULL
+      id text PRIMARY KEY,
+      email text NOT NULL UNIQUE,
+      password_hash text NOT NULL,
+      created_at text NOT NULL
     );
 
     CREATE TABLE IF NOT EXISTS shows (
-      id TEXT PRIMARY KEY,
-      owner_id TEXT NOT NULL DEFAULT 'owner-default',
-      name TEXT NOT NULL,
-      kind TEXT NOT NULL DEFAULT 'essay',
-      description TEXT NOT NULL DEFAULT '',
-      voice_id TEXT,
-      recipe_id TEXT,
-      created_at TEXT NOT NULL,
-      updated_at TEXT NOT NULL
+      id text PRIMARY KEY,
+      owner_id text NOT NULL DEFAULT 'owner-default',
+      name text NOT NULL,
+      kind text NOT NULL DEFAULT 'essay',
+      description text NOT NULL DEFAULT '',
+      voice_id text,
+      recipe_id text,
+      created_at text NOT NULL,
+      updated_at text NOT NULL
     );
 
     CREATE TABLE IF NOT EXISTS experiments (
-      id TEXT PRIMARY KEY,
-      owner_id TEXT NOT NULL DEFAULT 'owner-default',
-      name TEXT NOT NULL,
-      kind TEXT NOT NULL,
-      results TEXT NOT NULL DEFAULT '[]',
-      winner TEXT,
-      winner_variant TEXT,
-      cost REAL,
-      created_at TEXT NOT NULL
+      id text PRIMARY KEY,
+      owner_id text NOT NULL DEFAULT 'owner-default',
+      name text NOT NULL,
+      kind text NOT NULL,
+      results text NOT NULL DEFAULT '[]',
+      winner text,
+      winner_variant text,
+      cost double precision,
+      created_at text NOT NULL
     );
 
     CREATE TABLE IF NOT EXISTS territories (
-      id TEXT PRIMARY KEY,
-      owner_id TEXT NOT NULL DEFAULT 'owner-default',
-      name TEXT NOT NULL,
-      kind TEXT NOT NULL,
-      graph TEXT NOT NULL DEFAULT '{"nodes":[],"edges":[]}',
-      created_at TEXT NOT NULL
+      id text PRIMARY KEY,
+      owner_id text NOT NULL DEFAULT 'owner-default',
+      name text NOT NULL,
+      kind text NOT NULL,
+      graph text NOT NULL DEFAULT '{"nodes":[],"edges":[]}',
+      created_at text NOT NULL
     );
   `);
-  ensureColumn(db, "generation_records", "corpus_segment_ids", "TEXT NOT NULL DEFAULT '[]'");
-  ensureColumn(db, "posts", "reading_order", "INTEGER");
-  ensureColumn(db, "topic_ideas", "series", "TEXT");
-  ensureColumn(db, "topic_ideas", "series_order", "INTEGER");
-  ensureColumn(db, "generation_records", "prompt_tokens", "INTEGER");
-  ensureColumn(db, "generation_records", "completion_tokens", "INTEGER");
-  ensureColumn(db, "generation_records", "total_tokens", "INTEGER");
-  ensureColumn(db, "generation_records", "cost", "REAL");
-  // Per-owner isolation: user-content tables carry owner_id (existing rows default to the single original owner).
-  for (const table of [
-    "posts",
-    "corpus_sources",
-    "corpus_segments",
-    "brief_seeds",
-    "schedule_entries",
-    "generation_records",
-    "topic_ideas",
-    "seo_packages",
-    "image_assets",
-    "repurpose_packages",
-    "voice_distillations"
-  ]) {
-    ensureColumn(db, table, "owner_id", "TEXT NOT NULL DEFAULT 'owner-default'");
-  }
-  ensureColumn(db, "image_assets", "role", "TEXT");
-  ensureColumn(db, "image_assets", "style", "TEXT");
-  ensureColumn(db, "image_assets", "caption", "TEXT");
-}
-
-function ensureColumn(db: DatabaseSync, table: string, column: string, definition: string) {
-  const rows = db.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name?: string }>;
-  if (rows.some((row) => row.name === column)) return;
-  db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition};`);
 }

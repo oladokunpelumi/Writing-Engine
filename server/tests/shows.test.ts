@@ -2,36 +2,36 @@ import { describe, expect, it } from "vitest";
 import { openDatabase } from "../src/db";
 import { Repository } from "../src/repository";
 
-function repo() {
-  return new Repository(openDatabase(":memory:"));
+async function repo() {
+  return new Repository(await openDatabase());
 }
 
 describe("shows", () => {
-  it("seeds a default essay show pointing at the active voice", () => {
-    const r = repo();
-    const shows = r.listShows();
+  it("seeds a default essay show pointing at the active voice", async () => {
+    const r = await repo();
+    const shows = await r.listShows();
     expect(shows.length).toBe(1);
     expect(shows[0].kind).toBe("essay");
-    expect(shows[0].voiceId).toBe(r.getVoice().id);
-    expect(r.getActiveShow().id).toBe(shows[0].id);
+    expect(shows[0].voiceId).toBe((await r.getVoice()).id);
+    expect((await r.getActiveShow()).id).toBe(shows[0].id);
   });
 
-  it("creates a show and switching it sets the active voice", () => {
-    const r = repo();
-    const gridVoice = r.createVoice("The Grid Voice");
-    const show = r.createShow({ name: "The Grid", kind: "grid", description: "", voiceId: gridVoice.id });
-    const active = r.setActiveShow(show.id);
+  it("creates a show and switching it sets the active voice", async () => {
+    const r = await repo();
+    const gridVoice = await r.createVoice("The Grid Voice");
+    const show = await r.createShow({ name: "The Grid", kind: "grid", description: "", voiceId: gridVoice.id });
+    const active = await r.setActiveShow(show.id);
     expect(active?.id).toBe(show.id);
-    expect(r.getActiveShow().id).toBe(show.id);
-    expect(r.getVoice().id).toBe(gridVoice.id);
+    expect((await r.getActiveShow()).id).toBe(show.id);
+    expect((await r.getVoice()).id).toBe(gridVoice.id);
   });
 
-  it("deletes a show and falls back to a remaining one", () => {
-    const r = repo();
-    const a = r.listShows()[0];
-    const b = r.createShow({ name: "Second", kind: "custom", description: "" });
-    r.setActiveShow(b.id);
-    expect(r.deleteShow(b.id)).toBe(true);
-    expect(r.getActiveShow().id).toBe(a.id);
+  it("deletes a show and falls back to a remaining one", async () => {
+    const r = await repo();
+    const a = (await r.listShows())[0];
+    const b = await r.createShow({ name: "Second", kind: "custom", description: "" });
+    await r.setActiveShow(b.id);
+    expect(await r.deleteShow(b.id)).toBe(true);
+    expect((await r.getActiveShow()).id).toBe(a.id);
   });
 });

@@ -32,6 +32,18 @@ select:focus-visible {
     @apply rounded-md border border-slate-200 bg-white/90 p-4 shadow-sm backdrop-blur md:p-5;
   }
 
+  .panel-piece {
+    @apply rounded-md border border-ember/20 bg-ember-wash/55 p-4 shadow-[0_18px_55px_rgba(17,24,39,0.09)] md:p-5;
+  }
+
+  .panel-instrument {
+    @apply rounded-md border border-slate-200 bg-white/75 p-4 shadow-sm md:p-5;
+  }
+
+  .dusk-accent {
+    @apply border-dusk/20 bg-dusk-wash/70 text-dusk;
+  }
+
   .nav-btn {
     @apply flex h-11 items-center gap-3 rounded-md px-3 text-left text-sm font-bold text-slate-600 transition;
   }
@@ -78,6 +90,66 @@ select:focus-visible {
 
   .badge {
     @apply rounded-md border border-cyan-200 bg-cyan-50 px-2 py-1 text-xs font-bold uppercase text-cyan-800;
+  }
+
+  .badge-ember {
+    @apply rounded-md border border-ember/25 bg-ember-wash px-2 py-1 text-xs font-bold uppercase text-ember;
+  }
+
+  .badge-dusk {
+    @apply rounded-md border border-dusk/25 bg-dusk-wash px-2 py-1 text-xs font-bold uppercase text-dusk;
+  }
+
+  .animate-enter {
+    animation: cc-enter 320ms ease-out both;
+  }
+
+  .become-reveal {
+    animation: cc-become 620ms cubic-bezier(0.19, 1, 0.22, 1) both;
+  }
+
+  .animate-settle {
+    animation: cc-settle 420ms ease-out both;
+  }
+}
+
+@keyframes cc-enter {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes cc-become {
+  0% {
+    opacity: 0.18;
+    transform: translateY(18px) scale(0.985);
+    box-shadow: 0 0 0 rgba(194, 107, 44, 0);
+  }
+  55% {
+    opacity: 1;
+    transform: translateY(-2px) scale(1.005);
+    box-shadow: 0 22px 80px rgba(194, 107, 44, 0.18);
+  }
+  100% {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+    box-shadow: 0 18px 55px rgba(17, 24, 39, 0.09);
+  }
+}
+
+@keyframes cc-settle {
+  from {
+    opacity: 0;
+    transform: translateY(12px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
   }
 }
 

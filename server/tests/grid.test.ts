@@ -97,8 +97,8 @@ describe("grid engine (mock mode)", () => {
   });
 
   it("runs signals and a story offline (critic skipped in mock)", async () => {
-    const repo = new Repository(openDatabase(":memory:"));
-    repo.ensureGridShow();
+    const repo = new Repository(await openDatabase());
+    await repo.ensureGridShow();
     const signals = await runGridSignals(repo, {});
     expect(signals.combined.length).toBeGreaterThan(0);
     const story = await runGridStory(repo, { reviewGate: "seed 1, character Sùlú, emotion Wonder", signals: signals.combined });

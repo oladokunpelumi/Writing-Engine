@@ -200,7 +200,7 @@ export function mockRepurpose(finalText: string): { tweetThread: string[]; linke
 }
 
 export function mockSeo(finalText: string): Omit<SeoPackage, "id" | "createdAt"> {
-  const firstHeading = finalText.match(/^#\s+(.+)$/m)?.[1] ?? "Gbedu Desk Draft";
+  const firstHeading = finalText.match(/^#\s+(.+)$/m)?.[1] ?? "Co-Create Draft";
   const slug = firstHeading
     .toLowerCase()
     .replace(/[^a-z0-9\s-]/g, "")
@@ -208,7 +208,7 @@ export function mockSeo(finalText: string): Omit<SeoPackage, "id" | "createdAt">
     .replace(/\s+/g, "-")
     .slice(0, 72);
   return {
-    metaTitle: `${firstHeading} | Gbedu Desk`,
+    metaTitle: `${firstHeading} | Co-Create`,
     metaDescription:
       "An essay on faith, writing, identity, and the systems that shape what we become.",
     slug: slug || "gbedu-desk-draft",

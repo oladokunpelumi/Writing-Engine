@@ -2,6 +2,8 @@ import { useEffect, useMemo, useState } from "react";
 import {
   BookOpen,
   CalendarDays,
+  ChevronDown,
+  ChevronRight,
   Clipboard,
   Database,
   Download,
@@ -15,6 +17,7 @@ import {
   ListOrdered,
   Network,
   Loader2,
+  Menu,
   PenLine,
   Plus,
   Save,
@@ -26,7 +29,8 @@ import {
   Target,
   Trash2,
   Tv,
-  Wand2
+  Wand2,
+  X
 } from "lucide-react";
 import type {
   BriefSeed,
@@ -62,8 +66,13 @@ import type {
 } from "../../shared/src";
 import { DEFAULT_VOICE_PROFILE } from "../../shared/src";
 import { api, getToken, setToken } from "./api";
+import { brandCopy, polishMoves, type MoveKey } from "./brand";
 
 type Tab = "compose" | "grid" | "experiments" | "graph" | "library" | "import" | "corpus" | "prompts" | "discover" | "voice" | "calendar" | "history";
+
+// The advanced engines live behind the "Labs" group in the sidebar; the primary
+// spine is just Create / Library / Voice.
+const LABS_TABS: Tab[] = ["discover", "grid", "experiments", "graph", "calendar", "import", "corpus", "prompts", "history"];
 
 const blankBrief: BriefInput = {
   topic: "",
@@ -87,7 +96,11 @@ const blankChecklist = {
 
 export default function App() {
   const [tab, setTab] = useState<Tab>("compose");
+  const [labsOpen, setLabsOpen] = useState(false);
+  const [navOpen, setNavOpen] = useState(false);
+  const [welcomeDone, setWelcomeDone] = useState(false);
   const [health, setHealth] = useState({ aiProvider: "mock", vectorRetrievalEnabled: false, authRequired: false });
+  const [modelProfile, setModelProfile] = useState<"cost-first" | "balanced" | "premium">("balanced");
   const [authed, setAuthed] = useState<boolean>(Boolean(getToken()));
   const [voice, setVoice] = useState<VoiceProfile>(DEFAULT_VOICE_PROFILE);
   const [voices, setVoices] = useState<VoiceProfile[]>([]);
@@ -138,6 +151,7 @@ export default function App() {
     const nextHealth = await api.health();
     setHealth(nextHealth);
     if (nextHealth.authRequired && !getToken()) return; // show login first
+    setModelProfile((await api.modelProfile()).profile);
     await refresh();
   }
 
@@ -190,79 +204,146 @@ export default function App() {
     return <AuthScreen onAuthed={() => refresh()} />;
   }
 
+  const setTabAndClose = (next: Tab) => {
+    setTab(next);
+    setNavOpen(false);
+  };
+
+  const navigation = (
+    <>
+      <div className="mb-6">
+        <div className="flex items-center gap-3">
+          <CoCreateMark className="h-11 w-11" />
+          <div>
+            <h1 className="font-display text-xl font-bold">Co-Create</h1>
+            <p className="text-xs text-slate-500">writes as you · {health.aiProvider}</p>
+          </div>
+        </div>
+        {shows.length > 1 ? (
+          <label className="mt-4 block">
+            <span className="label">Show</span>
+            <select
+              className="input"
+              value={activeShowId}
+              onChange={(event) => runStep("Switching show", () => api.setActiveShow(event.target.value), async () => refresh())}
+            >
+              {shows.map((show) => (
+                <option value={show.id} key={show.id}>{show.name}</option>
+              ))}
+            </select>
+          </label>
+        ) : null}
+      </div>
+      <nav className="grid gap-1">
+        <NavButton tab="compose" current={tab} setTab={setTabAndClose} icon={<FileText size={17} />} label="Create" />
+        <NavButton tab="library" current={tab} setTab={setTabAndClose} icon={<Library size={17} />} label="Library" />
+        <NavButton tab="voice" current={tab} setTab={setTabAndClose} icon={<Settings size={17} />} label="Voice" />
+      </nav>
+      <div className="mt-4 border-t border-slate-200 pt-4">
+        <button
+          className="nav-btn w-full justify-between"
+          onClick={() => setLabsOpen((open) => !open)}
+          aria-expanded={labsOpen || LABS_TABS.includes(tab)}
+        >
+          <span className="flex items-center gap-3"><FlaskConical size={17} /> Labs</span>
+          {labsOpen || LABS_TABS.includes(tab) ? <ChevronDown size={16} /> : <ChevronRight size={16} />}
+        </button>
+        {labsOpen || LABS_TABS.includes(tab) ? (
+          <div className="mt-1 grid gap-1 pl-2">
+            <NavButton tab="discover" current={tab} setTab={setTabAndClose} icon={<Lightbulb size={16} />} label="Discover" />
+            <NavButton tab="grid" current={tab} setTab={setTabAndClose} icon={<Tv size={16} />} label="The Grid" />
+            <NavButton tab="experiments" current={tab} setTab={setTabAndClose} icon={<FlaskConical size={16} />} label="Experiments" />
+            <NavButton tab="graph" current={tab} setTab={setTabAndClose} icon={<Network size={16} />} label="Knowledge Graph" />
+            <NavButton tab="calendar" current={tab} setTab={setTabAndClose} icon={<CalendarDays size={16} />} label="Calendar" />
+            <NavButton tab="import" current={tab} setTab={setTabAndClose} icon={<Database size={16} />} label="Import" />
+            <NavButton tab="corpus" current={tab} setTab={setTabAndClose} icon={<BookOpen size={16} />} label="Corpus" />
+            <NavButton tab="prompts" current={tab} setTab={setTabAndClose} icon={<SlidersHorizontal size={16} />} label="Prompts" />
+            <NavButton tab="history" current={tab} setTab={setTabAndClose} icon={<History size={16} />} label="History" />
+          </div>
+        ) : null}
+      </div>
+      {totalSpend > 0 ? (
+        <div className="mt-6 border-t border-slate-200 pt-5">
+          <Metric label="Spend" value={`$${totalSpend.toFixed(4)}`} />
+        </div>
+      ) : null}
+      <label className="mt-4 block border-t border-slate-200 pt-4">
+        <span className="label">Model profile</span>
+        <select
+          className="input"
+          value={modelProfile}
+          onChange={(event) =>
+            runStep(
+              "Switching model profile",
+              () => api.setModelProfile(event.target.value as typeof modelProfile),
+              (result) => setModelProfile(result.profile)
+            )
+          }
+        >
+          <option value="balanced">Balanced ladder</option>
+          <option value="cost-first">Cost-first</option>
+          <option value="premium">Premium polish</option>
+        </select>
+        <p className="mt-2 text-xs text-slate-500">Explicit stage env vars still override this runtime profile.</p>
+      </label>
+      {health.authRequired ? (
+        <button className="btn mt-4 w-full" onClick={() => { setToken(null); setAuthed(false); }}>
+          Log out
+        </button>
+      ) : null}
+    </>
+  );
+
   return (
-    <main className="min-h-screen bg-[#f5f1e8] text-ink">
-      <div className="mx-auto grid max-w-[1500px] gap-5 px-4 py-4 lg:grid-cols-[260px_1fr] lg:px-6">
-        <aside className="desk-panel sticky top-4 h-fit">
-          <div className="mb-6">
-            <div className="flex items-center gap-3">
-              <div className="grid h-10 w-10 place-items-center rounded-md bg-ink text-white">
-                <PenLine size={20} />
-              </div>
-              <div>
-                <h1 className="font-display text-xl font-bold">Gbedu Desk</h1>
-                <p className="text-xs text-slate-500">{health.aiProvider} mode</p>
-              </div>
+    <main className="min-h-screen bg-paper text-ink">
+      <header className="sticky top-0 z-30 border-b border-ember/10 bg-paper/95 px-4 py-3 backdrop-blur lg:hidden">
+        <div className="mx-auto flex max-w-3xl items-center justify-between">
+          <div className="flex items-center gap-3">
+            <CoCreateMark className="h-10 w-10" />
+            <div>
+              <p className="font-display text-lg font-bold leading-tight">Co-Create</p>
+              <p className="text-xs text-slate-500">the engine is open</p>
             </div>
-            {shows.length > 0 ? (
-              <label className="mt-4 block">
-                <span className="label">Show</span>
-                <select
-                  className="input"
-                  value={activeShowId}
-                  onChange={(event) => runStep("Switching show", () => api.setActiveShow(event.target.value), async () => refresh())}
-                >
-                  {shows.map((show) => (
-                    <option value={show.id} key={show.id}>{show.name}</option>
-                  ))}
-                </select>
-              </label>
-            ) : null}
           </div>
-          <nav className="grid gap-1">
-            <NavButton tab="compose" current={tab} setTab={setTab} icon={<FileText size={17} />} label="Compose" />
-            <NavButton tab="library" current={tab} setTab={setTab} icon={<Library size={17} />} label="Library" />
-            <NavButton tab="import" current={tab} setTab={setTab} icon={<Database size={17} />} label="Import" />
-            <NavButton tab="corpus" current={tab} setTab={setTab} icon={<BookOpen size={17} />} label="Corpus" />
-            <NavButton tab="prompts" current={tab} setTab={setTab} icon={<SlidersHorizontal size={17} />} label="Prompts" />
-            <NavButton tab="discover" current={tab} setTab={setTab} icon={<Lightbulb size={17} />} label="Discover" />
-            <NavButton tab="voice" current={tab} setTab={setTab} icon={<Settings size={17} />} label="Voice" />
-            <NavButton tab="calendar" current={tab} setTab={setTab} icon={<CalendarDays size={17} />} label="Calendar" />
-            <NavButton tab="grid" current={tab} setTab={setTab} icon={<Tv size={17} />} label="The Grid" />
-            <NavButton tab="experiments" current={tab} setTab={setTab} icon={<FlaskConical size={17} />} label="Experiments" />
-            <NavButton tab="graph" current={tab} setTab={setTab} icon={<Network size={17} />} label="Knowledge Graph" />
-            <NavButton tab="history" current={tab} setTab={setTab} icon={<History size={17} />} label="History" />
-          </nav>
-          <div className="mt-6 grid gap-3 border-t border-slate-200 pt-5 text-sm">
-            <Metric label="Library" value={String(posts.length)} />
-            <Metric label="Seeds" value={String(briefSeeds.length)} />
-            <Metric label="Prompts" value={String(promptTemplates.length)} />
-            <Metric label="Queue" value={String(schedules.length)} />
-            <Metric label="Vector" value={health.vectorRetrievalEnabled ? "on" : "ready"} />
-            <Metric label="Spend" value={totalSpend > 0 ? `$${totalSpend.toFixed(4)}` : "—"} />
-          </div>
-          {health.authRequired ? (
-            <button className="btn mt-4 w-full" onClick={() => { setToken(null); setAuthed(false); }}>
-              Log out
-            </button>
-          ) : null}
+          <button className="icon-btn hover:border-ember/30 hover:bg-ember-wash hover:text-ember" onClick={() => setNavOpen(true)} aria-label="Open navigation">
+            <Menu size={19} />
+          </button>
+        </div>
+      </header>
+      {navOpen ? (
+        <div className="fixed inset-0 z-40 bg-ink/30 lg:hidden" onClick={() => setNavOpen(false)}>
+          <aside className="h-full w-[min(84vw,320px)] bg-paper p-4 shadow-2xl" onClick={(event) => event.stopPropagation()}>
+            <div className="mb-4 flex justify-end">
+              <button className="icon-btn hover:border-ember/30 hover:bg-ember-wash hover:text-ember" onClick={() => setNavOpen(false)} aria-label="Close navigation">
+                <X size={18} />
+              </button>
+            </div>
+            {navigation}
+          </aside>
+        </div>
+      ) : null}
+      <div className="mx-auto grid max-w-[1500px] gap-5 px-4 py-4 lg:grid-cols-[260px_1fr] lg:px-6">
+        <aside className="desk-panel sticky top-4 hidden h-fit lg:block">
+          {navigation}
         </aside>
 
         <section className="grid gap-5">
           {error ? <div className="rounded-md border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800">{error}</div> : null}
-          {posts.length === 0 && tab === "compose" ? (
-            <OnboardingCard
+          {posts.length === 0 && !welcomeDone && tab === "compose" ? (
+            <WelcomeScreen
               busy={busy}
-              onOnboard={(postsText) => runStep("Building your voice", async () => {
+              onJustStart={() => setWelcomeDone(true)}
+              onBuildVoice={(postsText) => runStep("Building your voice", async () => {
                 await api.importCommit({ posts: postsText });
                 return api.distillVoice();
               }, async (res) => {
                 setVoice(res.voice);
+                setWelcomeDone(true);
                 await refresh();
               })}
             />
           ) : null}
-          {tab === "compose" && (
+          {tab === "compose" && !(posts.length === 0 && !welcomeDone) && (
             <ComposeView
               brief={brief}
               setBrief={setBrief}
@@ -331,7 +412,7 @@ export default function App() {
                 setImage(imageAsset);
               })}
               onSaveFinal={() => runStep("Saving", () => api.createPost({
-                title: seo?.metaTitle?.replace(" | Gbedu Desk", "") || brief.topic || "Untitled Gbedu Draft",
+                title: seo?.metaTitle?.replace(" | Co-Create", "") || brief.topic || "Untitled Co-Create Draft",
                 body: finalForPackage,
                 status: "published",
                 tags: seo?.tags ?? [],
@@ -586,145 +667,256 @@ function ComposeView(props: {
 }) {
   const b = props.brief;
   const update = (key: keyof BriefInput, value: string) => props.setBrief({ ...b, [key]: value });
+  const working = props.finalText || props.draft;
+
+  type Step = "bring" | "draft" | "polish" | "done";
+  const [step, setStep] = useState<Step>(props.finalText ? "polish" : props.draft ? "draft" : "bring");
+  const [move, setMove] = useState<MoveKey | null>(null);
+  const [showDetail, setShowDetail] = useState(false);
+  const [draftRevealed, setDraftRevealed] = useState(Boolean(props.draft));
+
+  useEffect(() => {
+    if (props.draft && !draftRevealed) setDraftRevealed(true);
+  }, [props.draft, draftRevealed]);
+
+  const STEPS: { key: Step; label: string }[] = [
+    { key: "bring", label: "Bring" },
+    { key: "draft", label: "Draft" },
+    { key: "polish", label: "Polish" },
+    { key: "done", label: "Done" }
+  ];
+  const moveIcons: Record<MoveKey, React.ReactNode> = {
+    sharpen: <Search size={15} />,
+    refine: <Wand2 size={15} />,
+    hooks: <Sparkles size={15} />,
+    desire: <Target size={15} />,
+    images: <Image size={15} />,
+    score: <Layers size={15} />
+  };
 
   return (
-    <div className="grid gap-5 xl:grid-cols-[minmax(0,1.05fr)_minmax(360px,.95fr)]">
-      <section className="grid gap-5">
-        <div className="desk-panel">
-        <PanelTitle icon={<FileText size={18} />} title="Compose" action={props.busy} />
-        <div className="grid gap-3 md:grid-cols-2">
-          <Field label="Topic" value={b.topic} onChange={(value) => update("topic", value)} />
-          <Field label="Anchor" value={b.anchor} onChange={(value) => update("anchor", value)} />
-          <Field label="Seed" value={b.seed} onChange={(value) => update("seed", value)} />
-          <Field label="Audience" value={b.audience} onChange={(value) => update("audience", value)} />
-          <Field label="Observation" value={b.observation} onChange={(value) => update("observation", value)} />
-          <Field label="Tension" value={b.tension} onChange={(value) => update("tension", value)} />
-          <Field label="Format" value={b.format} onChange={(value) => update("format", value)} />
-          <Field label="Target length" value={b.targetLength} onChange={(value) => update("targetLength", value)} />
-          <label className="block">
-            <span className="label">Hook style</span>
-            <select
-              className="input"
-              value={b.hookStyle ?? "mirror-scene"}
-              onChange={(event) => props.setBrief({ ...b, hookStyle: event.target.value as BriefInput["hookStyle"] })}
-            >
-              <option value="mirror-scene">Mirror scene (reader sees themselves)</option>
-              <option value="direct-analytical">Direct / analytical</option>
-              <option value="provocative-question">Provocative question</option>
-              <option value="confession">Confession</option>
-            </select>
-          </label>
-        </div>
-        <label className="mt-3 block">
-          <span className="label">Raw notes</span>
-          <textarea className="input min-h-40" value={b.rawNotes} onChange={(event) => update("rawNotes", event.target.value)} />
-        </label>
-        <div className="mt-4 flex flex-wrap gap-2">
-          <ActionButton icon={<Sparkles size={16} />} disabled={!props.pipelineReady || Boolean(props.busy)} onClick={props.onFrame}>
-            Frame
-          </ActionButton>
-          <ActionButton icon={<PenLine size={16} />} disabled={!props.frame || Boolean(props.busy)} onClick={props.onDraft}>
-            Draft
-          </ActionButton>
-          <ActionButton icon={<Search size={16} />} disabled={!props.draft || Boolean(props.busy)} onClick={props.onSharpen}>
-            Sharpen
-          </ActionButton>
-          <ActionButton icon={<Layers size={16} />} disabled={!props.draft || Boolean(props.busy)} onClick={props.onDeepSharpen}>
-            Deep Sharpen
-          </ActionButton>
-          <ActionButton icon={<Image size={16} />} disabled={!(props.finalText || props.draft) || Boolean(props.busy)} onClick={props.onPackage}>
-            Package
-          </ActionButton>
-        </div>
-        {props.draftPostId ? (
-          <p className="mt-2 text-xs text-tide">Auto-saved as a draft in your Library.</p>
-        ) : null}
-        </div>
-        <WorkflowPanel
-          workflows={props.workflows}
-          result={props.workflowResult}
-          busy={props.busy}
-          onRun={props.onRunWorkflow}
-        />
-        <RefinePanel
-          posts={props.posts}
-          currentText={props.finalText || props.draft}
-          busy={props.busy}
-          onRefine={props.onRefine}
-          onLoadDoctrine={props.onLoadDoctrine}
-        />
-        <BriefSeedsPanel seeds={props.briefSeeds} onUseSeed={props.onUseSeed} />
-      </section>
+    <div className="mx-auto w-full max-w-3xl">
+      {/* Progress spine: start somewhere, land transformed. */}
+      <div className="mb-8 flex items-center justify-center">
+        {STEPS.map((s, i) => (
+          <div key={s.key} className="flex items-center">
+            <button onClick={() => setStep(s.key)} className="flex items-center gap-2">
+              <span className={`grid h-8 w-8 place-items-center rounded-full text-sm font-bold transition ${step === s.key ? "bg-ink text-white" : "border border-slate-200 bg-white text-slate-400"}`}>{i + 1}</span>
+              <span className={`hidden text-sm font-bold sm:block ${step === s.key ? "text-ink" : "text-slate-400"}`}>{s.label}</span>
+            </button>
+            {i < STEPS.length - 1 ? <span className="mx-3 h-px w-6 bg-slate-200 sm:w-10" /> : null}
+          </div>
+        ))}
+      </div>
 
-      <section className="grid gap-5">
-        <StageCard title="Frame" value={props.frame} setValue={props.setFrame} />
-        <StageCard title="Draft" value={props.draft} setValue={props.setDraft} />
-        <StageCard title="Final" value={props.finalText} setValue={props.setFinalText} />
-        <div className="desk-panel">
-          <PanelTitle icon={<Clipboard size={18} />} title="Export" />
-          <div className="flex flex-wrap gap-2">
-            <ActionButton icon={<Clipboard size={16} />} disabled={!(props.finalText || props.draft)} onClick={props.onCopy}>
-              Copy
-            </ActionButton>
-            <a className="btn" href="/api/export/library">
-              <Download size={16} /> Library MD
-            </a>
-            <ActionButton icon={<Save size={16} />} disabled={!(props.finalText || props.draft)} onClick={props.onSaveFinal}>
-              Save to Library
-            </ActionButton>
-            <ActionButton icon={<Search size={16} />} disabled={!(props.finalText || props.draft)} onClick={props.onEvaluate}>
-              Score
-            </ActionButton>
-            <ActionButton icon={<Sparkles size={16} />} disabled={!props.qualityReport} onClick={props.onRewrite}>
-              Clean Rewrite
-            </ActionButton>
-            <ActionButton icon={<Share2 size={16} />} disabled={!(props.finalText || props.draft) || Boolean(props.busy)} onClick={props.onRepurpose}>
-              Repurpose
-            </ActionButton>
-          </div>
-          <FirstLookPanel text={props.finalText || props.draft} cover={props.image} hooks={props.hooks} onGenerate={props.onGenerateHooks} onUse={props.onUseHook} busy={props.busy} />
-          <div className="mt-5 flex flex-wrap items-end gap-2">
-            <label className="block">
-              <span className="label">Image style</span>
-              <select className="input" value={props.imageStyle} onChange={(event) => props.setImageStyle(event.target.value)}>
-                <option value="editorial">Editorial / cinematic</option>
-                <option value="meme">Meme / relatable scene</option>
-                <option value="productified">Productified / branded</option>
-                <option value="diagram">Diagram / explainer</option>
-              </select>
+      {step === "bring" && (
+        <div className="grid gap-5 animate-enter">
+          <div className="panel-piece">
+            <span className="badge-ember">{brandCopy.messyWelcome}</span>
+            <h2 className="mt-4 font-display text-2xl font-bold">Lay down what you have.</h2>
+            <p className="mt-1 text-slate-600">{brandCopy.promise}</p>
+            <label className="mt-6 block">
+              <span className="label">Your notes — paste anything</span>
+              <textarea
+                className="input min-h-56 leading-7"
+                value={b.rawNotes}
+                onChange={(event) => update("rawNotes", event.target.value)}
+                placeholder="Fragments, contradictions, a voice-note transcript, a half sentence, the thing you almost said..."
+              />
             </label>
-            <label className="block">
-              <span className="label">Section images</span>
-              <select className="input" value={props.visualCount} onChange={(event) => props.setVisualCount(Number(event.target.value))}>
-                {[1, 2, 3, 4, 5].map((n) => <option key={n} value={n}>{n}</option>)}
-              </select>
+            <label className="mt-3 block">
+              <span className="label">In a line — what's it about?</span>
+              <input className="input" value={b.topic} onChange={(event) => update("topic", event.target.value)} placeholder="e.g. Why I stopped waiting for motivation" />
             </label>
-            <ActionButton icon={<Image size={16} />} disabled={!(props.finalText || props.draft) || Boolean(props.busy)} onClick={props.onCover}>
-              Generate cover
-            </ActionButton>
-            <ActionButton icon={<Image size={16} />} disabled={!(props.finalText || props.draft) || Boolean(props.busy)} onClick={props.onVisualStory}>
-              Visual story
-            </ActionButton>
-            <ActionButton icon={<Download size={16} />} disabled={!props.image && props.sectionImages.length === 0} onClick={props.onCopyIllustrated}>
-              Copy w/ images
-            </ActionButton>
+            <label className="mt-3 block">
+              <span className="label">The other side (optional)</span>
+              <input className="input" value={b.tension} onChange={(event) => update("tension", event.target.value)} placeholder="What feels opposite, repressed, unresolved, or hard to say?" />
+            </label>
+            <button className="mt-3 text-xs font-bold text-tide" onClick={() => setShowDetail((value) => !value)}>
+              {showDetail ? "Hide detail" : "Add detail (optional)"}
+            </button>
+            {showDetail ? (
+              <div className="mt-3 grid gap-3 rounded-md bg-white/65 p-4 md:grid-cols-2">
+                <Field label="Anchor" value={b.anchor} onChange={(value) => update("anchor", value)} />
+                <Field label="Seed" value={b.seed} onChange={(value) => update("seed", value)} />
+                <Field label="Audience" value={b.audience} onChange={(value) => update("audience", value)} />
+                <Field label="Observation" value={b.observation} onChange={(value) => update("observation", value)} />
+                <Field label="Format" value={b.format} onChange={(value) => update("format", value)} />
+                <Field label="Target length" value={b.targetLength} onChange={(value) => update("targetLength", value)} />
+                <label className="block">
+                  <span className="label">Opening style</span>
+                  <select className="input" value={b.hookStyle ?? "mirror-scene"} onChange={(event) => props.setBrief({ ...b, hookStyle: event.target.value as BriefInput["hookStyle"] })}>
+                    <option value="mirror-scene">Mirror scene (reader sees themselves)</option>
+                    <option value="direct-analytical">Direct / analytical</option>
+                    <option value="provocative-question">Provocative question</option>
+                    <option value="confession">Confession</option>
+                  </select>
+                </label>
+              </div>
+            ) : null}
+            <div className="mt-6 flex flex-wrap items-center gap-3">
+              <button className="btn" disabled={!props.pipelineReady || Boolean(props.busy)} onClick={() => { props.onDraft(); setStep("draft"); }}>
+                <Wand2 size={16} /> Shape it
+              </button>
+              <button className="text-sm font-bold text-slate-500 disabled:text-slate-300" disabled={!props.pipelineReady || Boolean(props.busy)} onClick={props.onFrame}>
+                Outline first
+              </button>
+              {props.busy ? <span className="text-sm text-slate-400">{props.busy}…</span> : null}
+            </div>
+            {!props.pipelineReady ? <p className="mt-2 text-sm text-ember">{brandCopy.disabledBegin}</p> : null}
+            {props.frame ? <div className="mt-4"><StageCard title="Outline" value={props.frame} setValue={props.setFrame} /></div> : null}
           </div>
-          <VisualIdentityEditor showId={props.activeShowId} />
+
+          <details className="panel-instrument">
+            <summary className="cursor-pointer font-bold text-slate-700">Start from something you saved</summary>
+            <div className="mt-4 grid gap-5">
+              <BriefSeedsPanel seeds={props.briefSeeds} onUseSeed={props.onUseSeed} />
+              <WorkflowPanel workflows={props.workflows} result={props.workflowResult} busy={props.busy} onRun={props.onRunWorkflow} />
+            </div>
+          </details>
+        </div>
+      )}
+
+      {step === "draft" && (
+        <div className="grid gap-5 animate-enter">
+          <div className={props.draft && draftRevealed ? "panel-piece become-reveal" : "panel-piece"}>
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <h2 className="font-display text-2xl font-bold">Your draft</h2>
+              <span className="badge-ember">written as you</span>
+            </div>
+            <p className="mt-1 text-slate-600">{brandCopy.firstForm} Edit freely; when it feels close, move to Polish.</p>
+            {props.draft ? (
+              <div className="mt-4 grid gap-2 rounded-md border border-ember/15 bg-white/65 p-3 text-sm text-slate-600 sm:grid-cols-2">
+                <p><strong className="text-ink">What changed:</strong> the fragments have a path.</p>
+                <p><strong className="text-ink">What it kept:</strong> your raw material and pressure.</p>
+              </div>
+            ) : null}
+            {props.draft ? (
+              <textarea className="input mt-5 min-h-[440px] leading-7" value={props.draft} onChange={(event) => props.setDraft(event.target.value)} />
+            ) : (
+              <p className="mt-5 text-sm text-slate-400">No draft yet — go back to Bring and hit “Shape it”.{props.busy ? ` (${props.busy}…)` : ""}</p>
+            )}
+            <div className="mt-4 flex flex-wrap items-center gap-3">
+              <button className="btn" disabled={!props.draft} onClick={() => setStep("polish")}><Wand2 size={16} /> Polish →</button>
+              <button className="text-sm font-bold text-slate-500 disabled:text-slate-300" disabled={Boolean(props.busy)} onClick={props.onDraft}>Redraft</button>
+            </div>
+          </div>
+          {props.retrieved.length ? <RetrievalPanel retrieved={props.retrieved} /> : null}
+        </div>
+      )}
+
+      {step === "polish" && (
+        <div className="grid gap-5 animate-enter">
+          <div className="panel-piece">
+            <h2 className="font-display text-2xl font-bold">Polish</h2>
+            <p className="mt-1 text-slate-600">Pick a move. Each one is a transformation; the piece stays centered.</p>
+            <div className="mt-4 grid gap-2 sm:grid-cols-2">
+              {polishMoves.map((m) => (
+                <button
+                  key={m.key}
+                  onClick={() => setMove(move === m.key ? null : m.key)}
+                  className={`rounded-md border px-3 py-3 text-left transition ${move === m.key ? "border-ink bg-ink text-white" : "border-white bg-white/75 text-slate-700 hover:border-ember/30"}`}
+                >
+                  <span className="flex items-center gap-2 text-sm font-bold">{moveIcons[m.key]} {m.group}: {m.label}</span>
+                  <span className={`mt-1 block text-xs ${move === m.key ? "text-white/75" : "text-slate-500"}`}>{m.intent}</span>
+                </button>
+              ))}
+            </div>
+            <textarea
+              className="input mt-5 min-h-[380px] leading-7"
+              value={working}
+              onChange={(event) => (props.finalText ? props.setFinalText : props.setDraft)(event.target.value)}
+            />
+            <div className="mt-4">
+              <button className="btn" disabled={!working} onClick={() => setStep("done")}><Save size={16} /> Finish →</button>
+            </div>
+          </div>
+
+          {move === "sharpen" ? (
+            <div className="panel-instrument">
+              <h3 className="flex items-center gap-2 font-bold"><Search size={16} /> Tighten</h3>
+              <p className="mt-1 text-sm text-slate-500">A critique-and-tighten pass. Deep Sharpen runs a multi-model panel — slower and costlier, for high-value pieces.</p>
+              <div className="mt-3 flex flex-wrap gap-2">
+                <ActionButton icon={<Search size={16} />} disabled={!props.draft || Boolean(props.busy)} onClick={props.onSharpen}>Sharpen</ActionButton>
+                <ActionButton icon={<Layers size={16} />} disabled={!props.draft || Boolean(props.busy)} onClick={props.onDeepSharpen}>Deep Sharpen</ActionButton>
+              </div>
+            </div>
+          ) : null}
+          {move === "refine" ? (
+            <RefinePanel posts={props.posts} currentText={working} busy={props.busy} onRefine={props.onRefine} onLoadDoctrine={props.onLoadDoctrine} />
+          ) : null}
+          {move === "hooks" ? (
+            <div className="panel-instrument">
+              <FirstLookPanel text={working} cover={props.image} hooks={props.hooks} onGenerate={props.onGenerateHooks} onUse={props.onUseHook} busy={props.busy} />
+            </div>
+          ) : null}
+          {move === "desire" ? (
+            <DesireMeterPanel report={props.desireReport} ready={Boolean(working)} busy={props.busy} onCheck={props.onCheckDesire} onPass={props.onDesirePass} />
+          ) : null}
+          {move === "images" ? (
+            <div className="panel-instrument">
+              <h3 className="flex items-center gap-2 font-bold"><Image size={16} /> Make it visible</h3>
+              <div className="mt-3 flex flex-wrap items-end gap-2">
+                <label className="block">
+                  <span className="label">Style</span>
+                  <select className="input" value={props.imageStyle} onChange={(event) => props.setImageStyle(event.target.value)}>
+                    <option value="editorial">Editorial / cinematic</option>
+                    <option value="meme">Meme / relatable scene</option>
+                    <option value="productified">Productified / branded</option>
+                    <option value="diagram">Diagram / explainer</option>
+                  </select>
+                </label>
+                <label className="block">
+                  <span className="label">Section images</span>
+                  <select className="input" value={props.visualCount} onChange={(event) => props.setVisualCount(Number(event.target.value))}>
+                    {[1, 2, 3, 4, 5].map((n) => <option key={n} value={n}>{n}</option>)}
+                  </select>
+                </label>
+                <ActionButton icon={<Image size={16} />} disabled={!working || Boolean(props.busy)} onClick={props.onCover}>Cover</ActionButton>
+                <ActionButton icon={<Image size={16} />} disabled={!working || Boolean(props.busy)} onClick={props.onVisualStory}>Visual story</ActionButton>
+                <ActionButton icon={<Download size={16} />} disabled={!props.image && props.sectionImages.length === 0} onClick={props.onCopyIllustrated}>Copy w/ images</ActionButton>
+              </div>
+              <VisualIdentityEditor showId={props.activeShowId} />
+              {props.image ? <img className="mt-4 h-40 w-full rounded-md object-cover" src={props.image.url} alt="Cover" /> : null}
+              <VisualStoryGallery cover={props.image} sections={props.sectionImages} />
+            </div>
+          ) : null}
+          {move === "score" ? (
+            <div className="panel-instrument">
+              <h3 className="flex items-center gap-2 font-bold"><Layers size={16} /> Clear the static</h3>
+              <p className="mt-1 text-sm text-slate-500">An anti-slop read on the piece, with a one-click clean rewrite.</p>
+              <div className="mt-3 flex flex-wrap gap-2">
+                <ActionButton icon={<Search size={16} />} disabled={!working} onClick={props.onEvaluate}>Score it</ActionButton>
+                <ActionButton icon={<Sparkles size={16} />} disabled={!props.qualityReport} onClick={props.onRewrite}>Clean rewrite</ActionButton>
+              </div>
+              <QualityPanel report={props.qualityReport} />
+              <GuardrailPanel citations={props.citations} />
+            </div>
+          ) : null}
+        </div>
+      )}
+
+      {step === "done" && (
+        <div className="grid gap-5 animate-settle">
+          <div className="panel-piece">
+            <span className="badge-ember">Done</span>
+            <h2 className="mt-3 font-display text-2xl font-bold">{brandCopy.done}</h2>
+            <p className="mt-1 text-slate-600">{brandCopy.arcReflection}</p>
+            <div className="mt-5 flex flex-wrap gap-2">
+              <ActionButton icon={<Save size={16} />} disabled={!working} onClick={props.onSaveFinal}>Save the piece</ActionButton>
+              <ActionButton icon={<Clipboard size={16} />} disabled={!working} onClick={props.onCopy}>Release it</ActionButton>
+              <ActionButton icon={<Download size={16} />} disabled={!props.image && props.sectionImages.length === 0} onClick={props.onCopyIllustrated}>Copy w/ images</ActionButton>
+              <ActionButton icon={<Image size={16} />} disabled={!working || Boolean(props.busy)} onClick={props.onPackage}>SEO + cover</ActionButton>
+              <ActionButton icon={<Share2 size={16} />} disabled={!working || Boolean(props.busy)} onClick={props.onRepurpose}>Repurpose</ActionButton>
+              <a className="btn" href="/api/export/library"><Download size={16} /> Library MD</a>
+            </div>
+            {props.draftPostId ? <p className="mt-3 text-xs text-tide">Auto-saved as a draft in your Library.</p> : null}
+          </div>
           <PackageSummary seo={props.seo} image={props.image} />
           <VisualStoryGallery cover={props.image} sections={props.sectionImages} />
           <RepurposePanel pack={props.repurpose} />
-          <DesireMeterPanel
-            report={props.desireReport}
-            ready={Boolean(props.finalText || props.draft)}
-            busy={props.busy}
-            onCheck={props.onCheckDesire}
-            onPass={props.onDesirePass}
-          />
-          <QualityPanel report={props.qualityReport} />
-          <GuardrailPanel citations={props.citations} />
-          <RetrievalPanel retrieved={props.retrieved} />
         </div>
-      </section>
+      )}
     </div>
   );
 }
@@ -957,9 +1149,29 @@ function LibraryView(props: {
         </label>
       </section>
       <section className="grid gap-3">
+        <div className="panel-piece">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div>
+              <span className="badge-dusk">Start here arc</span>
+              <h2 className="mt-2 font-display text-xl font-bold">The path your body of work is teaching.</h2>
+            </div>
+            <button className="btn" disabled={!props.posts.length} onClick={props.onSuggestOrder}>
+              <ListOrdered size={16} /> Shape the arc
+            </button>
+          </div>
+          <div className="mt-4 grid gap-2">
+            {ordered.slice(0, 5).map((post, index) => (
+              <button className="rounded-md border border-white bg-white/70 p-3 text-left transition hover:border-dusk/20" key={post.id} onClick={() => setOpenId(post.id)}>
+                <span className="text-xs font-bold uppercase text-dusk">Step {index + 1}</span>
+                <p className="font-display text-lg font-bold">{post.title}</p>
+              </button>
+            ))}
+            {!ordered.length ? <p className="text-sm text-slate-600">Save or import a few pieces and Co-Create can reflect a starting path back to you.</p> : null}
+          </div>
+        </div>
         {ordered.length === 0 ? <p className="text-sm text-slate-600">No posts for this filter yet.</p> : null}
         {ordered.map((post) => (
-          <article className="desk-panel" key={post.id}>
+          <article className="panel-instrument" key={post.id}>
             <div className="flex items-start justify-between gap-4">
               <button className="text-left" onClick={() => setOpenId(post.id)}>
                 <h2 className="font-display text-xl font-bold hover:text-tide">{post.title}</h2>
@@ -1803,6 +2015,9 @@ function HistoryView({ generations }: { generations: GenerationRecord[] }) {
   return (
     <section className="desk-panel">
       <PanelTitle icon={<History size={18} />} title="Generation History" />
+      <p className="mb-4 text-sm text-slate-600">
+        Every piece leaves a trail: stage, model, provider, token use, and cost. Latency/fallback columns are ready for display once the server stores those fields with each generation.
+      </p>
       <div className="grid gap-3">
         {generations.map((generation) => (
           <article className="rounded-md border border-slate-200 bg-white p-4" key={generation.id}>
@@ -1822,6 +2037,7 @@ function HistoryView({ generations }: { generations: GenerationRecord[] }) {
                     {generation.usage.cost !== undefined ? ` · $${generation.usage.cost.toFixed(4)}` : ""}
                   </p>
                 ) : null}
+                <p className="mt-1 text-xs text-slate-400">fallback: provider-routed</p>
               </div>
             </div>
             <p className="mt-3 line-clamp-3 whitespace-pre-line text-sm leading-6 text-slate-700">{generation.content}</p>
@@ -1901,8 +2117,24 @@ function VoiceView(props: {
 }) {
   const updateArray = (key: keyof VoiceProfile, value: string) =>
     props.setVoice({ ...props.voice, [key]: value.split("\n").filter(Boolean) });
+  const voiceMirror = [
+    props.voice.pillars[0],
+    props.voice.spine[0],
+    props.voice.register
+  ]
+    .filter(Boolean)
+    .join(" · ");
   return (
-    <section className="desk-panel">
+    <section className="grid gap-5">
+      <div className="panel-piece dusk-accent">
+        <span className="badge-dusk">Mirror</span>
+        <h2 className="mt-3 font-display text-2xl font-bold text-ink">Here's how you sound.</h2>
+        <p className="mt-2 max-w-2xl text-sm leading-6 text-slate-700">
+          {voiceMirror || "Give Co-Create a few posts and it will reflect the shape of your voice back before it writes."}
+        </p>
+        <p className="mt-3 text-xs font-bold uppercase text-dusk">More this / less that lives below. Save, then re-distill after imports when your voice changes.</p>
+      </div>
+      <div className="desk-panel">
       <PanelTitle icon={<BookOpen size={18} />} title="Voice Profile" action={props.busy} />
       <div className="mb-4 flex flex-wrap items-end gap-2 border-b border-slate-200 pb-4">
         <label className="block grow">
@@ -1937,6 +2169,7 @@ function VoiceView(props: {
       <ActionButton icon={<Save size={16} />} disabled={Boolean(props.busy)} onClick={props.onSave}>
         Save Voice
       </ActionButton>
+      </div>
     </section>
   );
 }
@@ -2423,6 +2656,17 @@ function splitLinesOrCommas(value: string) {
     .filter(Boolean);
 }
 
+function CoCreateMark({ className = "h-10 w-10" }: { className?: string }) {
+  return (
+    <svg className={className} viewBox="0 0 48 48" role="img" aria-label="Co-Create mark">
+      <rect width="48" height="48" rx="10" fill="#F5F1E8" />
+      <line x1="13" y1="38" x2="22" y2="13" stroke="#111827" strokeWidth="4.5" strokeLinecap="round" />
+      <line x1="35" y1="38" x2="26" y2="13" stroke="#111827" strokeWidth="4.5" strokeLinecap="round" />
+      <circle cx="24" cy="10.5" r="2.6" fill="#C26B2C" />
+    </svg>
+  );
+}
+
 function labelFromKey(key: string) {
   return key.replace(/([A-Z])/g, " $1").replace(/^./, (letter) => letter.toUpperCase());
 }
@@ -2451,11 +2695,9 @@ function AuthScreen({ onAuthed }: { onAuthed: () => void }) {
     <main className="grid min-h-screen place-items-center bg-[#f5f1e8] p-4 text-ink">
       <div className="desk-panel w-full max-w-md">
         <div className="mb-5 flex items-center gap-3">
-          <div className="grid h-10 w-10 place-items-center rounded-md bg-ink text-white">
-            <PenLine size={20} />
-          </div>
+          <CoCreateMark className="h-10 w-10" />
           <div>
-            <h1 className="font-display text-xl font-bold">Gbedu Desk</h1>
+            <h1 className="font-display text-xl font-bold">Co-Create</h1>
             <p className="text-xs text-slate-500">{mode === "login" ? "Sign in" : "Create your account"}</p>
           </div>
         </div>
@@ -2478,16 +2720,58 @@ function AuthScreen({ onAuthed }: { onAuthed: () => void }) {
   );
 }
 
-function OnboardingCard({ busy, onOnboard }: { busy: string; onOnboard: (posts: string) => void }) {
+function WelcomeScreen({
+  busy,
+  onJustStart,
+  onBuildVoice
+}: {
+  busy: string;
+  onJustStart: () => void;
+  onBuildVoice: (posts: string) => void;
+}) {
   const [posts, setPosts] = useState("");
+  const [showPaste, setShowPaste] = useState(false);
   return (
-    <section className="desk-panel border-2 border-dashed border-tide/40">
-      <PanelTitle icon={<Sparkles size={18} />} title="Welcome — build your voice" action={busy} />
-      <p className="text-sm text-slate-600">Paste a few of your existing posts (markdown is fine). Gbedu Desk will store them as memory and distill your voice profile so your first draft already sounds like you.</p>
-      <textarea className="input mt-3 min-h-52 font-mono text-xs" value={posts} onChange={(event) => setPosts(event.target.value)} placeholder="Paste your posts here..." />
-      <ActionButton icon={<Sparkles size={16} />} disabled={!posts.trim() || Boolean(busy)} onClick={() => onOnboard(posts)}>
-        Build my voice
-      </ActionButton>
-    </section>
+    <div className="mx-auto w-full max-w-2xl py-6 text-center">
+      <div className="mx-auto flex justify-center"><CoCreateMark className="h-16 w-16" /></div>
+      <span className="badge-ember mt-4 inline-block">{brandCopy.messyWelcome}</span>
+      <h1 className="mt-4 font-display text-4xl font-bold leading-tight">Step into the engine. Leave with work that still sounds like you.</h1>
+      <p className="mx-auto mt-3 max-w-lg text-slate-500">
+        {brandCopy.promise} You can bring fragments, conflict, pressure, and the version of the thought that is not polished yet.
+      </p>
+
+      <div className="mt-8 grid gap-4 text-left sm:grid-cols-2">
+        <button
+          className="panel-piece flex flex-col items-start gap-2 text-left transition hover:-translate-y-0.5"
+          disabled={Boolean(busy)}
+          onClick={onJustStart}
+        >
+          <span className="grid h-10 w-10 place-items-center rounded-md bg-ember text-white"><Wand2 size={18} /></span>
+          <span className="font-display text-lg font-bold">Enter with notes</span>
+          <span className="text-sm text-slate-600">Start messy. The first move is to be received before being generated for.</span>
+        </button>
+        <button
+          className="panel-instrument flex flex-col items-start gap-2 text-left transition hover:-translate-y-0.5"
+          disabled={Boolean(busy)}
+          onClick={() => setShowPaste((value) => !value)}
+        >
+          <span className="grid h-10 w-10 place-items-center rounded-md bg-dusk text-white"><Sparkles size={18} /></span>
+          <span className="font-display text-lg font-bold">Build your voice first</span>
+          <span className="text-sm text-slate-500">Paste a few posts; Co-Create reflects how you sound, then drafts with you.</span>
+        </button>
+      </div>
+
+      {showPaste ? (
+        <div className="desk-panel mt-4 text-left">
+          <p className="text-sm text-slate-500">Paste a few existing posts (markdown is fine). {busy ? `${busy}…` : ""}</p>
+          <textarea className="input mt-3 min-h-48 font-mono text-xs" value={posts} onChange={(event) => setPosts(event.target.value)} placeholder="Paste your posts here…" />
+          <div className="mt-3">
+            <ActionButton icon={<Sparkles size={16} />} disabled={!posts.trim() || Boolean(busy)} onClick={() => onBuildVoice(posts)}>
+              Build my voice
+            </ActionButton>
+          </div>
+        </div>
+      ) : null}
+    </div>
   );
 }

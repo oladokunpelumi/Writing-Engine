@@ -1,0 +1,285 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Co-Create — Brand System</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=DM+Sans:opsz,wght@9..40,400;9..40,500;9..40,700&family=Syne:wght@600;700;800&display=swap" rel="stylesheet" />
+<style>
+  :root {
+    --ink: #111827;
+    --paper: #f5f1e8;
+    --tide: #0e7490;
+    --ember: #c26b2c;
+    --ember-wash: #f3e3ce;
+    --dusk: #6e5b92;
+    --dusk-wash: #ece7f2;
+    --line: #e2dccb;          /* warm-biased neutral, derived from paper */
+    --muted: #6b6657;          /* warm slate */
+    --card: #fbf9f3;
+  }
+  * { box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+  body {
+    margin: 0;
+    background: var(--paper);
+    color: var(--ink);
+    font-family: "DM Sans", ui-sans-serif, system-ui, sans-serif;
+    font-size: 17px;
+    line-height: 1.65;
+    -webkit-font-smoothing: antialiased;
+  }
+  .wrap { max-width: 980px; margin: 0 auto; padding: 0 24px; }
+  h1, h2, h3 { font-family: "Syne", ui-sans-serif, sans-serif; font-weight: 700; line-height: 1.08; text-wrap: balance; margin: 0; }
+  .eyebrow { font-size: 0.72rem; font-weight: 700; letter-spacing: 0.14em; text-transform: uppercase; color: var(--tide); }
+  p { margin: 0 0 1rem; max-width: 64ch; }
+  section { padding: 72px 0; border-top: 1px solid var(--line); }
+  section:first-of-type { border-top: none; }
+
+  /* Hero */
+  .hero { padding: 92px 0 80px; text-align: left; }
+  .hero h1 { font-size: clamp(2.6rem, 6vw, 4.4rem); font-weight: 800; letter-spacing: -0.01em; }
+  .hero .lede { font-size: 1.3rem; color: var(--muted); margin-top: 18px; max-width: 30ch; }
+  .markrow { display: flex; align-items: center; gap: 18px; margin-bottom: 34px; }
+  .wordmark { font-family: "Syne", sans-serif; font-weight: 800; font-size: 1.9rem; letter-spacing: -0.01em; }
+  .for-as em { font-style: normal; color: var(--ember); }
+  .for-as .as { color: var(--tide); }
+
+  /* Become demo */
+  .become {
+    margin-top: 40px; padding: 28px; border-radius: 14px; background: var(--card);
+    border: 1px solid var(--line); max-width: 560px;
+  }
+  .become .frag { color: var(--muted); font-size: 0.95rem; }
+  .become .piece {
+    margin-top: 14px; padding: 18px 20px; border-radius: 10px; background: #fff;
+    border: 1px solid var(--line); position: relative; overflow: hidden;
+  }
+  .become .piece p { margin: 0; }
+  .become .piece::before {
+    content: ""; position: absolute; inset: 0; background: var(--ember-wash);
+    opacity: 0; pointer-events: none;
+  }
+  .become.playing .piece { animation: rise 620ms cubic-bezier(.2,.7,.2,1) both; }
+  .become.playing .piece::before { animation: bloom 900ms ease-out both; }
+  .become.playing .badge { animation: fade 700ms 180ms ease-out both; }
+  @keyframes rise { from { transform: translateY(14px); opacity: 0; } to { transform: none; opacity: 1; } }
+  @keyframes bloom { 0% { opacity: .9; } 100% { opacity: 0; } }
+  @keyframes fade { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }
+  .badge {
+    display: inline-block; margin-top: 12px; font-size: 0.7rem; font-weight: 700;
+    letter-spacing: 0.08em; text-transform: uppercase; color: var(--ember);
+    background: var(--ember-wash); border: 1px solid #ecd9bf;
+    padding: 4px 9px; border-radius: 999px;
+  }
+  button.replay {
+    margin-top: 16px; font-family: inherit; font-size: 0.85rem; font-weight: 700;
+    color: var(--ink); background: none; border: 1px solid var(--ink); border-radius: 8px;
+    padding: 7px 14px; cursor: pointer;
+  }
+  button.replay:focus-visible { outline: 3px solid rgba(14,116,144,.4); outline-offset: 2px; }
+
+  /* Palette */
+  .swatches { display: grid; grid-template-columns: repeat(auto-fill, minmax(190px,1fr)); gap: 14px; margin-top: 22px; }
+  .sw { border: 1px solid var(--line); border-radius: 12px; overflow: hidden; background: var(--card); }
+  .sw .chip { height: 96px; }
+  .sw .meta { padding: 12px 14px; }
+  .sw .name { font-weight: 700; font-family: "Syne", sans-serif; }
+  .sw .hex { font-variant-numeric: tabular-nums; color: var(--muted); font-size: 0.85rem; }
+  .sw .role { font-size: 0.85rem; color: var(--muted); margin-top: 4px; }
+
+  /* Type specimens */
+  .spec { border: 1px solid var(--line); border-radius: 12px; padding: 22px; background: var(--card); margin-top: 16px; }
+  .spec .tag { font-size: 0.72rem; letter-spacing: .12em; text-transform: uppercase; color: var(--muted); font-weight: 700; }
+  .spec .display { font-family: "Syne", sans-serif; font-weight: 800; font-size: 2.4rem; letter-spacing: -0.01em; margin-top: 6px; }
+  .spec .body { font-size: 1.05rem; margin-top: 6px; }
+  .scale { display: flex; flex-wrap: wrap; gap: 8px 20px; margin-top: 14px; color: var(--muted); font-size: 0.85rem; font-variant-numeric: tabular-nums; }
+
+  /* Two-column do/don't + move map */
+  .cols { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; margin-top: 18px; }
+  @media (max-width: 680px) { .cols { grid-template-columns: 1fr; } }
+  .col { border: 1px solid var(--line); border-radius: 12px; padding: 18px 20px; background: var(--card); }
+  .col h3 { font-size: 1rem; margin-bottom: 10px; }
+  .col.do h3 { color: var(--tide); }
+  .col.dont h3 { color: #9a3b2f; }
+  ul.clean { list-style: none; padding: 0; margin: 0; display: grid; gap: 8px; }
+  ul.clean li { padding-left: 18px; position: relative; }
+  ul.clean li::before { content: "—"; position: absolute; left: 0; color: var(--muted); }
+
+  .moves { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px,1fr)); gap: 12px; margin-top: 18px; }
+  .move { border: 1px solid var(--line); border-radius: 12px; padding: 14px 16px; background: var(--card); }
+  .move .group { font-size: 0.7rem; letter-spacing: .1em; text-transform: uppercase; font-weight: 700; }
+  .move .from { color: var(--muted); text-decoration: line-through; }
+  .move .to { font-family: "Syne", sans-serif; font-weight: 700; font-size: 1.05rem; }
+  .move.shape .group { color: var(--ink); }
+  .move.reflect .group { color: var(--dusk); }
+  .move.dress .group { color: var(--ember); }
+  .move.check .group { color: var(--tide); }
+
+  .lockups { display: flex; flex-wrap: wrap; gap: 18px; margin-top: 20px; align-items: center; }
+  .lockup { border: 1px solid var(--line); border-radius: 12px; padding: 20px 24px; background: var(--card); display: flex; align-items: center; gap: 14px; }
+  .lockup.dark { background: var(--ink); }
+  .lockup.dark .wm { color: #fff; }
+  .wm { font-family: "Syne", sans-serif; font-weight: 800; font-size: 1.5rem; }
+  footer { padding: 56px 0 80px; color: var(--muted); font-size: 0.9rem; }
+
+  @media (prefers-reduced-motion: reduce) {
+    *, *::before { animation: none !important; }
+    html { scroll-behavior: auto; }
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <header class="hero">
+    <div class="markrow">
+      <svg width="60" height="60" viewBox="0 0 48 48" aria-label="Co-Create mark">
+        <line x1="11" y1="39" x2="21.5" y2="12" stroke="#111827" stroke-width="5" stroke-linecap="round"/>
+        <line x1="37" y1="39" x2="26.5" y2="12" stroke="#111827" stroke-width="5" stroke-linecap="round"/>
+        <circle cx="24" cy="9.5" r="2.7" fill="#c26b2c"/>
+      </svg>
+      <span class="wordmark">Co-Create</span>
+    </div>
+    <p class="eyebrow">Brand System · 2026</p>
+    <h1 class="for-as">It doesn't write <em>for</em> you.<br />It writes <span class="as">as</span> you.</h1>
+    <p class="lede">The writing engine that meets you in the unfinished.</p>
+
+    <div class="become" id="become">
+      <div class="frag">you bring: <i>“tired of waiting to feel ready. notes everywhere. the kids, the cold coffee, the blank page that wins.”</i></div>
+      <div class="piece">
+        <p>Some mornings the page wins before you've had your coffee. You don't need more readiness — you need to begin where you already are.</p>
+      </div>
+      <span class="badge">written as you</span>
+      <div><button class="replay" id="replay" type="button">▶ Replay the “become” moment</button></div>
+    </div>
+  </header>
+
+  <section>
+    <p class="eyebrow">Position</p>
+    <h2>A grounded mythic writing engine.</h2>
+    <p>For people who refuse to sound generic. You bring rough, unfinished, even contradictory inner material; Co-Create finds the living through-line and reflects back a shaped piece that still belongs to you.</p>
+    <p><strong>Promise —</strong> Bring the unfinished self. Leave with transformed work that still sounds like you.</p>
+    <p><strong>One and separate —</strong> you and the engine work as a single creative field, yet authorship always returns to you. Partner, not replacement. Mirror, not mask. Engine, not ghostwriter. Wand, not shortcut. Chamber, not dashboard.</p>
+  </section>
+
+  <section>
+    <p class="eyebrow">Color · three felt states</p>
+    <h2>Paper is the room. Ink is the writer. One accent per surface.</h2>
+    <div class="swatches">
+      <div class="sw"><div class="chip" style="background:#111827"></div><div class="meta"><div class="name" style="color:var(--ink)">Ink</div><div class="hex">#111827</div><div class="role">Authorship — text, the mark, primary action.</div></div></div>
+      <div class="sw"><div class="chip" style="background:#f5f1e8;border-bottom:1px solid var(--line)"></div><div class="meta"><div class="name">Paper</div><div class="hex">#F5F1E8</div><div class="role">The field — warm, receptive ground.</div></div></div>
+      <div class="sw"><div class="chip" style="background:#0e7490"></div><div class="meta"><div class="name" style="color:var(--tide)">Tide</div><div class="hex">#0E7490</div><div class="role">Intelligence / clarity — the engine's presence.</div></div></div>
+      <div class="sw"><div class="chip" style="background:#c26b2c"></div><div class="meta"><div class="name" style="color:var(--ember)">Ember</div><div class="hex">#C26B2C</div><div class="role">Transformation — the reveal, the wand's warmth.</div></div></div>
+      <div class="sw"><div class="chip" style="background:#6e5b92"></div><div class="meta"><div class="name" style="color:var(--dusk)">Dusk</div><div class="hex">#6E5B92</div><div class="role">Reflection — the mirror; Voice and reflect-moves.</div></div></div>
+      <div class="sw"><div class="chip" style="background:linear-gradient(90deg,#f3e3ce 50%,#ece7f2 50%)"></div><div class="meta"><div class="name">Washes</div><div class="hex">#F3E3CE · #ECE7F2</div><div class="role">Soft ember + dusk for state backgrounds.</div></div></div>
+    </div>
+    <p style="margin-top:18px;color:var(--muted);font-size:0.92rem">Avoid: gradient-orb decoration · purple-blue SaaS sameness · beige-only flatness · mystical clutter.</p>
+  </section>
+
+  <section>
+    <p class="eyebrow">Typography</p>
+    <h2>Syne for the engine. DM Sans for the voice.</h2>
+    <div class="spec">
+      <div class="tag">Display — Syne 700/800</div>
+      <div class="display">Start somewhere, land transformed.</div>
+      <div class="scale"><span>3.0rem</span><span>2.25rem</span><span>1.5rem</span><span>1.25rem</span></div>
+    </div>
+    <div class="spec">
+      <div class="tag">Body — DM Sans 400/500/700</div>
+      <p class="body">Lay down the fragments — the repressed, the opposite, the contradiction. You'll be met. Co-Create finds the through-line and hands back a first form, written in your cadence. Edit freely; it's yours.</p>
+      <div class="scale"><span>1.0rem body</span><span>0.875rem small</span><span>0.75rem label-caps</span><span>line-height 1.65</span></div>
+    </div>
+  </section>
+
+  <section>
+    <p class="eyebrow">The mark · “one and separate”</p>
+    <h2>Two strokes, a threshold, a seam of becoming.</h2>
+    <p>The writer's stroke and the engine's stroke lean toward a shared apex but stop short — leaving a threshold where the new self appears, bridged by an ember seam (the moment of becoming). Reads as two-becoming-one, a doorway, and the negative-space hint of a C.</p>
+    <div class="lockups">
+      <div class="lockup">
+        <svg width="40" height="40" viewBox="0 0 48 48" aria-hidden="true"><line x1="11" y1="39" x2="21.5" y2="12" stroke="#111827" stroke-width="5" stroke-linecap="round"/><line x1="37" y1="39" x2="26.5" y2="12" stroke="#111827" stroke-width="5" stroke-linecap="round"/><circle cx="24" cy="9.5" r="2.7" fill="#c26b2c"/></svg>
+        <span class="wm">Co-Create</span>
+      </div>
+      <div class="lockup dark">
+        <svg width="40" height="40" viewBox="0 0 48 48" aria-hidden="true"><line x1="11" y1="39" x2="21.5" y2="12" stroke="#f5f1e8" stroke-width="5" stroke-linecap="round"/><line x1="37" y1="39" x2="26.5" y2="12" stroke="#f5f1e8" stroke-width="5" stroke-linecap="round"/><circle cx="24" cy="9.5" r="2.7" fill="#c26b2c"/></svg>
+        <span class="wm">Co-Create</span>
+      </div>
+      <div class="lockup">
+        <svg width="44" height="44" viewBox="0 0 48 48" aria-label="favicon"><rect width="48" height="48" rx="10" fill="#f5f1e8"/><line x1="13" y1="38" x2="22" y2="13" stroke="#111827" stroke-width="4.5" stroke-linecap="round"/><line x1="35" y1="38" x2="26" y2="13" stroke="#111827" stroke-width="4.5" stroke-linecap="round"/><circle cx="24" cy="10.5" r="2.6" fill="#c26b2c"/></svg>
+        <span style="color:var(--muted);font-size:.85rem">favicon</span>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <p class="eyebrow">Motion · marks transformation, never decoration</p>
+    <h2>Enter. Become. Settle.</h2>
+    <div class="cols">
+      <div class="col"><h3 style="color:var(--ink)">Enter · ~250ms</h3><p style="margin:0;color:var(--muted)">Crossing the threshold into Create or a new step: a brief settle-up + fade.</p></div>
+      <div class="col"><h3 style="color:var(--ember)">Become · ~620ms</h3><p style="margin:0;color:var(--muted)">The draft reveal — the piece rises, an ember wash blooms and recedes, the badge fades in. The signature moment (above).</p></div>
+    </div>
+    <div class="cols" style="margin-top:12px">
+      <div class="col"><h3 style="color:var(--dusk)">Settle · ~200ms</h3><p style="margin:0;color:var(--muted)">Done — a calm downward settle. No confetti. “Still yours. Now shaped.”</p></div>
+      <div class="col"><h3 style="color:var(--tide)">Always</h3><p style="margin:0;color:var(--muted)">Every transition has a static fallback; honors <code>prefers-reduced-motion</code>.</p></div>
+    </div>
+  </section>
+
+  <section>
+    <p class="eyebrow">Voice</p>
+    <h2>Intimate, elevated, human. Magical without being vague.</h2>
+    <div class="cols">
+      <div class="col do"><h3>Do</h3><ul class="clean">
+        <li>“Bring the rough version.”</li>
+        <li>“Let the piece meet you back.”</li>
+        <li>“Shape this into something that still sounds like you.”</li>
+        <li>“Messy is welcome here.”</li>
+        <li>“Still yours. Now shaped.”</li>
+      </ul></div>
+      <div class="col dont"><h3>Do not</h3><ul class="clean">
+        <li>“Optimize your content pipeline.”</li>
+        <li>“Generate high-converting assets.”</li>
+        <li>“Unlock infinite productivity.”</li>
+        <li>“Let AI do it for you.”</li>
+        <li>“Transcend your human limitations.”</li>
+      </ul></div>
+    </div>
+  </section>
+
+  <section>
+    <p class="eyebrow">Polish moves · rename + group by intent</p>
+    <h2>Relationship verbs, not operations.</h2>
+    <div class="moves">
+      <div class="move shape"><div class="group">Shape</div><div><span class="from">Sharpen</span> → <span class="to">Tighten</span></div></div>
+      <div class="move shape"><div class="group">Shape</div><div><span class="from">Refine</span> → <span class="to">Meet the reader</span></div></div>
+      <div class="move reflect"><div class="group">Reflect</div><div><span class="from">Hook</span> → <span class="to">Open a mirror</span></div></div>
+      <div class="move reflect"><div class="group">Reflect</div><div><span class="from">Desire</span> → <span class="to">Give it want</span></div></div>
+      <div class="move dress"><div class="group">Dress</div><div><span class="from">Images</span> → <span class="to">Make it visible</span></div></div>
+      <div class="move check"><div class="group">Check</div><div><span class="from">Score</span> → <span class="to">Clear the static</span></div></div>
+    </div>
+  </section>
+
+  <footer>
+    Co-Create Brand System · companion to <code>docs/brand-system.md</code>, <code>docs/visual-ui-audit.md</code>, <code>docs/product-design-audit.md</code>, <code>docs/model-audit.md</code>. Marks: <code>docs/brand/logo-*.svg</code>.
+  </footer>
+
+</div>
+<script>
+  (function () {
+    var el = document.getElementById("become");
+    var btn = document.getElementById("replay");
+    var reduce = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    function play() {
+      if (reduce) return;
+      el.classList.remove("playing");
+      void el.offsetWidth; /* reflow to restart */
+      el.classList.add("playing");
+    }
+    if (!reduce) { window.addEventListener("load", function () { setTimeout(play, 450); }); }
+    btn.addEventListener("click", play);
+  })();
+</script>
+</body>
+</html>

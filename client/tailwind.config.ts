@@ -6,8 +6,12 @@ export default {
     extend: {
       colors: {
         ink: "#111827",
-        paper: "#f8fafc",
-        brass: "#b7791f",
+        paper: "#f5f1e8",
+        brass: "#C26B2C",
+        ember: "#C26B2C",
+        "ember-wash": "#F3E3CE",
+        dusk: "#6E5B92",
+        "dusk-wash": "#ECE7F2",
         tide: "#0e7490"
       },
       fontFamily: {

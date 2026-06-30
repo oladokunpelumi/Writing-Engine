@@ -45,6 +45,7 @@ import {
   draftPrompt,
   extractBeats,
   framePrompt,
+  modelProfile,
   modelFor,
   runDesirePass,
   runDiscover,
@@ -81,7 +82,7 @@ export function createRouter(repo: Repository) {
     });
   });
 
-  router.post("/auth/register", (req, res) => {
+  router.post("/auth/register", async (req, res) => {
     if (process.env.AUTH_REQUIRED !== "true") {
       res.status(400).json({ error: "Auth is disabled on this server" });
       return;
@@ -97,22 +98,22 @@ export function createRouter(repo: Repository) {
       res.status(400).json({ error: "A valid email and an 8+ character password are required" });
       return;
     }
-    if (repo.getUserByEmail(email)) {
+    if (await repo.getUserByEmail(email)) {
       res.status(409).json({ error: "That email is already registered" });
       return;
     }
-    const user = repo.createUser(email, hashPassword(password));
+    const user = await repo.createUser(email, hashPassword(password));
     res.status(201).json({ token: signToken({ sub: user.id, email: user.email }), email: user.email });
   });
 
-  router.post("/auth/login", (req, res) => {
+  router.post("/auth/login", async (req, res) => {
     if (process.env.AUTH_REQUIRED !== "true") {
       res.json({ token: "dev-token", mode: "dev" });
       return;
     }
     const email = String(req.body?.email ?? "").trim();
     const password = String(req.body?.password ?? "");
-    const user = repo.getUserByEmail(email);
+    const user = await repo.getUserByEmail(email);
     if (!user || !verifyPassword(password, user.passwordHash)) {
       res.status(401).json({ error: "Invalid email or password" });
       return;
@@ -137,82 +138,96 @@ export function createRouter(repo: Repository) {
     ownerContext.run(claims.sub, () => next());
   });
 
-  router.get("/voice", (_req, res) => res.json(repo.getVoice()));
-  router.put("/voice", (req, res) => {
-    const parsed = VoiceProfileSchema.parse(req.body);
-    res.json(repo.updateVoice(parsed));
+  router.get("/model-profile", (_req, res) => {
+    res.json({ profile: modelProfile() });
   });
 
-  router.get("/voices", (_req, res) => res.json(repo.listVoices()));
-  router.post("/voices", (req, res) => {
+  router.put("/model-profile", (req, res) => {
+    const profile = String(req.body?.profile ?? "");
+    if (!["cost-first", "balanced", "premium"].includes(profile)) {
+      res.status(400).json({ error: "profile must be cost-first, balanced, or premium" });
+      return;
+    }
+    process.env.MODEL_PROFILE = profile;
+    res.json({ profile: modelProfile() });
+  });
+
+  router.get("/voice", async (_req, res) => res.json(await repo.getVoice()));
+  router.put("/voice", async (req, res) => {
+    const parsed = VoiceProfileSchema.parse(req.body);
+    res.json(await repo.updateVoice(parsed));
+  });
+
+  router.get("/voices", async (_req, res) => res.json(await repo.listVoices()));
+  router.post("/voices", async (req, res) => {
     const name = String(req.body?.name ?? "New voice");
     const base = req.body?.profile ? VoiceProfileSchema.parse(req.body.profile) : undefined;
-    res.status(201).json(repo.createVoice(name, base));
+    res.status(201).json(await repo.createVoice(name, base));
   });
-  router.put("/voices/active", (req, res) => {
+  router.put("/voices/active", async (req, res) => {
     const id = String(req.body?.id ?? "");
-    if (!repo.getVoiceById(id)) {
+    if (!(await repo.getVoiceById(id))) {
       res.status(404).json({ error: "Voice not found" });
       return;
     }
-    repo.setActiveVoice(id);
-    res.json(repo.getVoice());
+    await repo.setActiveVoice(id);
+    res.json(await repo.getVoice());
   });
-  router.put("/voices/:id", (req, res) => {
+  router.put("/voices/:id", async (req, res) => {
     const parsed = VoiceProfileSchema.parse(req.body);
-    const voice = repo.updateVoiceById(req.params.id, parsed);
+    const voice = await repo.updateVoiceById(req.params.id, parsed);
     if (!voice) res.status(404).json({ error: "Voice not found" });
     else res.json(voice);
   });
-  router.delete("/voices/:id", (req, res) => {
-    res.json({ deleted: repo.deleteVoice(req.params.id) });
+  router.delete("/voices/:id", async (req, res) => {
+    res.json({ deleted: await repo.deleteVoice(req.params.id) });
   });
 
   // ---- Shows / content lines ----
-  router.get("/shows", (_req, res) => res.json({ shows: repo.listShows(), activeShow: repo.getActiveShow() }));
-  router.post("/shows", (req, res) => {
+  router.get("/shows", async (_req, res) => res.json({ shows: await repo.listShows(), activeShow: await repo.getActiveShow() }));
+  router.post("/shows", async (req, res) => {
     const parsed = ShowInputSchema.parse(req.body);
-    res.status(201).json(repo.createShow(parsed));
+    res.status(201).json(await repo.createShow(parsed));
   });
-  router.put("/shows/active", (req, res) => {
-    const show = repo.setActiveShow(String(req.body?.id ?? ""));
+  router.put("/shows/active", async (req, res) => {
+    const show = await repo.setActiveShow(String(req.body?.id ?? ""));
     if (!show) res.status(404).json({ error: "Show not found" });
     else res.json(show);
   });
-  router.put("/shows/:id", (req, res) => {
+  router.put("/shows/:id", async (req, res) => {
     const parsed = ShowInputSchema.partial().parse(req.body);
-    const show = repo.updateShow(req.params.id, parsed);
+    const show = await repo.updateShow(req.params.id, parsed);
     if (!show) res.status(404).json({ error: "Show not found" });
     else res.json(show);
   });
-  router.delete("/shows/:id", (req, res) => {
-    res.json({ deleted: repo.deleteShow(req.params.id) });
+  router.delete("/shows/:id", async (req, res) => {
+    res.json({ deleted: await repo.deleteShow(req.params.id) });
   });
 
-  router.get("/posts", (_req, res) => res.json(repo.listPosts()));
-  router.post("/posts", (req, res) => {
+  router.get("/posts", async (_req, res) => res.json(await repo.listPosts()));
+  router.post("/posts", async (req, res) => {
     const parsed = PostInputSchema.parse(req.body);
-    res.status(201).json(repo.createPost(parsed));
+    res.status(201).json(await repo.createPost(parsed));
   });
-  router.put("/posts/:id", (req, res) => {
+  router.put("/posts/:id", async (req, res) => {
     const parsed = PostInputSchema.partial().parse(req.body);
-    const post = repo.updatePost(req.params.id, parsed);
+    const post = await repo.updatePost(req.params.id, parsed);
     if (!post) res.status(404).json({ error: "Post not found" });
     else res.json(post);
   });
-  router.delete("/posts/:id", (req, res) => {
-    res.json({ deleted: repo.deletePost(req.params.id) });
+  router.delete("/posts/:id", async (req, res) => {
+    res.json({ deleted: await repo.deletePost(req.params.id) });
   });
 
-  router.post("/posts/reading-order/suggest", (_req, res) => {
-    res.json(repo.suggestReadingOrder());
+  router.post("/posts/reading-order/suggest", async (_req, res) => {
+    res.json(await repo.suggestReadingOrder());
   });
 
   router.post("/retrieve", async (req, res, next) => {
     try {
       const brief = BriefInputSchema.parse(req.body.brief ?? req.body);
       const topK = Number(req.body.topK ?? 3);
-      res.json(await retrieve(repo, repo.listPosts(), brief, topK));
+      res.json(await retrieve(repo, await repo.listPosts(), brief, topK));
     } catch (error) {
       next(error);
     }
@@ -222,46 +237,54 @@ export function createRouter(repo: Repository) {
     res.json(buildPreviousInputsPreview(importContentFrom(req.body)));
   });
 
-  router.post("/import/previous-inputs/commit", (req, res) => {
+  router.post("/import/previous-inputs/commit", async (req, res) => {
     const content = importContentFrom(req.body);
     const preview = buildPreviousInputsPreview(content);
-    const existingTitles = new Set(repo.listPosts().map((post) => post.title.toLowerCase()));
-    const corpusSource = repo.upsertCorpusSource(combinedCorpusSource(content));
-    const corpusSegments = preview.corpusSegments.map((segment) => repo.upsertCorpusSegment(corpusSource.id, segment));
+    const existingTitles = new Set((await repo.listPosts()).map((post) => post.title.toLowerCase()));
+    const corpusSource = await repo.upsertCorpusSource(combinedCorpusSource(content));
+    const corpusSegments = await Promise.all(
+      preview.corpusSegments.map((segment) => repo.upsertCorpusSegment(corpusSource.id, segment))
+    );
     const segmentsByRange = new Map(
       corpusSegments.map((segment) => [`${segment.sourcePath}:${segment.lineStart}-${segment.lineEnd}`, segment])
     );
-    const briefSeeds = preview.briefSeeds.map((seed) => {
-      const segment = seed.sourceLineRange ? segmentsByRange.get(seed.sourceLineRange) : undefined;
-      return repo.upsertBriefSeed(seed, segment?.id);
-    });
-    const workflows = preview.workflowRecipes.map((recipe) => repo.upsertWorkflowRecipe(recipe));
-    const importedPosts = preview.posts
-      .filter((post) => !existingTitles.has(post.title.toLowerCase()))
-      .map((post) =>
-        repo.createPost({
-          title: post.title,
-          body: post.body,
-          status: "imported",
-          tags: post.tags,
-          sourceUrl: "import:previous-inputs"
-        })
-      );
-    const referencePosts = preview.referenceOutputs
-      .filter((reference) => !existingTitles.has(reference.name.toLowerCase()))
-      .map((reference) =>
-        repo.createPost({
-          title: reference.name,
-          body: reference.body,
-          status: "imported",
-          tags: ["reference-output", reference.kind],
-          sourceUrl: "import:reference-output"
-        })
-      );
-    const prompts = preview.promptTemplates.map((template) => repo.createPromptTemplate(template));
-    const distillation = repo.saveVoiceDistillation(distillVoice(importedPosts));
-    const voice = repo.updateVoice(applyDistillationToVoice(repo.getVoice(), distillation));
-    const batch = repo.createImportBatch({
+    const briefSeeds = await Promise.all(
+      preview.briefSeeds.map((seed) => {
+        const segment = seed.sourceLineRange ? segmentsByRange.get(seed.sourceLineRange) : undefined;
+        return repo.upsertBriefSeed(seed, segment?.id);
+      })
+    );
+    const workflows = await Promise.all(preview.workflowRecipes.map((recipe) => repo.upsertWorkflowRecipe(recipe)));
+    const importedPosts = await Promise.all(
+      preview.posts
+        .filter((post) => !existingTitles.has(post.title.toLowerCase()))
+        .map((post) =>
+          repo.createPost({
+            title: post.title,
+            body: post.body,
+            status: "imported",
+            tags: post.tags,
+            sourceUrl: "import:previous-inputs"
+          })
+        )
+    );
+    const referencePosts = await Promise.all(
+      preview.referenceOutputs
+        .filter((reference) => !existingTitles.has(reference.name.toLowerCase()))
+        .map((reference) =>
+          repo.createPost({
+            title: reference.name,
+            body: reference.body,
+            status: "imported",
+            tags: ["reference-output", reference.kind],
+            sourceUrl: "import:reference-output"
+          })
+        )
+    );
+    const prompts = await Promise.all(preview.promptTemplates.map((template) => repo.createPromptTemplate(template)));
+    const distillation = await repo.saveVoiceDistillation(distillVoice(importedPosts));
+    const voice = await repo.updateVoice(applyDistillationToVoice(await repo.getVoice(), distillation));
+    const batch = await repo.createImportBatch({
       source: "Downloads previous inputs",
       postsImported: importedPosts.length + referencePosts.length,
       promptsImported: prompts.length,
@@ -270,70 +293,70 @@ export function createRouter(repo: Repository) {
     res.json({ batch, importedPosts, prompts, distillation, voice, corpusSource, corpusSegments, briefSeeds, workflows });
   });
 
-  router.get("/corpus", (_req, res) => {
-    res.json({ sources: repo.listCorpusSources(), segments: repo.listCorpusSegments() });
+  router.get("/corpus", async (_req, res) => {
+    res.json({ sources: await repo.listCorpusSources(), segments: await repo.listCorpusSegments() });
   });
 
-  router.post("/corpus/load-refiner-doctrine", (_req, res) => {
-    ensureRefinerDoctrine(repo);
-    const segments = repo.listCorpusSegments().filter((segment) => segment.sourcePath.startsWith("article-refiner/references/"));
+  router.post("/corpus/load-refiner-doctrine", async (_req, res) => {
+    await ensureRefinerDoctrine(repo);
+    const segments = (await repo.listCorpusSegments()).filter((segment) => segment.sourcePath.startsWith("article-refiner/references/"));
     res.json({ loaded: segments.length, segments });
   });
 
-  router.get("/corpus/:id", (req, res) => {
-    const segment = repo.getCorpusSegment(req.params.id);
+  router.get("/corpus/:id", async (req, res) => {
+    const segment = await repo.getCorpusSegment(req.params.id);
     if (!segment) res.status(404).json({ error: "Corpus segment not found" });
     else res.json(segment);
   });
 
-  router.put("/corpus/:id/classification", (req, res) => {
+  router.put("/corpus/:id/classification", async (req, res) => {
     const parsed = CorpusClassificationInputSchema.parse(req.body);
-    const segment = repo.updateCorpusClassification(req.params.id, parsed);
+    const segment = await repo.updateCorpusClassification(req.params.id, parsed);
     if (!segment) res.status(404).json({ error: "Corpus segment not found" });
     else res.json(segment);
   });
 
-  router.get("/brief-seeds", (_req, res) => res.json(repo.listBriefSeeds()));
+  router.get("/brief-seeds", async (_req, res) => res.json(await repo.listBriefSeeds()));
 
-  router.post("/brief-seeds/:id/use", (req, res) => {
-    const brief = repo.briefFromSeed(req.params.id);
+  router.post("/brief-seeds/:id/use", async (req, res) => {
+    const brief = await repo.briefFromSeed(req.params.id);
     if (!brief) res.status(404).json({ error: "Brief seed not found" });
     else res.json(brief);
   });
 
-  router.get("/workflows", (_req, res) => res.json(repo.listWorkflowRecipes()));
+  router.get("/workflows", async (_req, res) => res.json(await repo.listWorkflowRecipes()));
 
-  router.put("/workflows/:id", (req, res) => {
+  router.put("/workflows/:id", async (req, res) => {
     const parsed = WorkflowRecipeInputSchema.parse(req.body);
-    const recipe = repo.updateWorkflowRecipe(req.params.id, parsed);
+    const recipe = await repo.updateWorkflowRecipe(req.params.id, parsed);
     if (!recipe) res.status(404).json({ error: "Workflow recipe not found" });
     else res.json(recipe);
   });
 
-  router.post("/voice/distill", (_req, res) => {
-    const distillation = repo.saveVoiceDistillation(distillVoice(repo.listPosts()));
-    const voice = repo.updateVoice(applyDistillationToVoice(repo.getVoice(), distillation));
+  router.post("/voice/distill", async (_req, res) => {
+    const distillation = await repo.saveVoiceDistillation(distillVoice(await repo.listPosts()));
+    const voice = await repo.updateVoice(applyDistillationToVoice(await repo.getVoice(), distillation));
     res.json({ distillation, voice });
   });
 
-  router.get("/prompts", (_req, res) => res.json(repo.listPromptTemplates()));
-  router.post("/prompts", (req, res) => {
+  router.get("/prompts", async (_req, res) => res.json(await repo.listPromptTemplates()));
+  router.post("/prompts", async (req, res) => {
     const parsed = PromptTemplateInputSchema.parse(req.body);
-    res.status(201).json(repo.createPromptTemplate(parsed));
+    res.status(201).json(await repo.createPromptTemplate(parsed));
   });
-  router.put("/prompts/:id", (req, res) => {
+  router.put("/prompts/:id", async (req, res) => {
     const parsed = PromptTemplateInputSchema.partial().parse(req.body);
-    const prompt = repo.updatePromptTemplate(req.params.id, parsed);
+    const prompt = await repo.updatePromptTemplate(req.params.id, parsed);
     if (!prompt) res.status(404).json({ error: "Prompt template not found" });
     else res.json(prompt);
   });
-  router.post("/prompts/:id/versions", (req, res) => {
+  router.post("/prompts/:id/versions", async (req, res) => {
     const parsed = PromptVersionInputSchema.parse(req.body);
-    res.status(201).json(repo.addPromptVersion(req.params.id, parsed));
+    res.status(201).json(await repo.addPromptVersion(req.params.id, parsed));
   });
-  router.put("/prompts/:id/active-version", (req, res) => {
+  router.put("/prompts/:id/active-version", async (req, res) => {
     const versionId = String(req.body?.versionId ?? "");
-    const prompt = repo.activatePromptVersion(req.params.id, versionId);
+    const prompt = await repo.activatePromptVersion(req.params.id, versionId);
     if (!prompt) res.status(404).json({ error: "Prompt version not found" });
     else res.json(prompt);
   });
@@ -341,9 +364,9 @@ export function createRouter(repo: Repository) {
   router.post("/generate/frame", async (req, res, next) => {
     try {
       const parsed = GenerateFrameRequestSchema.parse(req.body);
-      const promptVersion = repo.getActivePromptVersion("frame");
-      const response = await runFrame(parsed.brief, parsed.voice ?? repo.getVoice(), promptVersion);
-      const record = saveGeneration(repo, {
+      const promptVersion = await repo.getActivePromptVersion("frame");
+      const response = await runFrame(parsed.brief, parsed.voice ?? (await repo.getVoice()), promptVersion);
+      const record = await saveGeneration(repo, {
         stage: "frame",
         response,
         promptVersionId: promptVersion?.id,
@@ -358,16 +381,16 @@ export function createRouter(repo: Repository) {
   router.post("/generate/draft", async (req, res, next) => {
     try {
       const parsed = GenerateDraftRequestSchema.parse(req.body);
-      const retrieved = await retrieve(repo, repo.listPosts(), parsed.brief, parsed.topK);
+      const retrieved = await retrieve(repo, await repo.listPosts(), parsed.brief, parsed.topK);
       const response = await runDraft(
         parsed.brief,
         parsed.editedFrame ?? parsed.frame,
-        repo.getVoice(),
+        await repo.getVoice(),
         retrieved.map((item) => item.post),
-        repo.getLatestVoiceDistillation()?.metaphors ?? [],
-        repo.getActivePromptVersion("draft")
+        (await repo.getLatestVoiceDistillation())?.metaphors ?? [],
+        await repo.getActivePromptVersion("draft")
       );
-      const record = saveGeneration(repo, {
+      const record = await saveGeneration(repo, {
         stage: "draft",
         response,
         promptVersionId: response.promptVersionId,
@@ -383,14 +406,14 @@ export function createRouter(repo: Repository) {
   router.post("/generate/sharpen", async (req, res, next) => {
     try {
       const parsed = GenerateSharpenRequestSchema.parse(req.body);
-      const promptVersion = repo.getActivePromptVersion("sharpen");
-      const response = await runSharpen(parsed.draft, parsed.voice ?? repo.getVoice(), promptVersion, parsed.fusion);
-      const record = saveGeneration(repo, {
+      const promptVersion = await repo.getActivePromptVersion("sharpen");
+      const response = await runSharpen(parsed.draft, parsed.voice ?? (await repo.getVoice()), promptVersion, parsed.fusion);
+      const record = await saveGeneration(repo, {
         stage: "sharpen",
         response,
         promptVersionId: promptVersion?.id
       });
-      const draftPostId = upsertDraft(repo, { draftPostId: parsed.draftPostId, finalText: response.content });
+      const draftPostId = await upsertDraft(repo, { draftPostId: parsed.draftPostId, finalText: response.content });
       res.json({ ...response, generationId: record.id, draftPostId });
     } catch (error) {
       next(error);
@@ -403,15 +426,15 @@ export function createRouter(repo: Repository) {
   router.post("/generate/refine", async (req, res, next) => {
     try {
       const parsed = GenerateRefineRequestSchema.parse(req.body);
-      const promptVersion = repo.getActivePromptVersion("refine");
-      const doctrine = refinerDoctrineFor(repo, parsed.params);
-      const response = await runRefine(parsed.text, parsed.voice ?? repo.getVoice(), parsed.params, promptVersion, doctrine);
-      const record = saveGeneration(repo, {
+      const promptVersion = await repo.getActivePromptVersion("refine");
+      const doctrine = await refinerDoctrineFor(repo, parsed.params);
+      const response = await runRefine(parsed.text, parsed.voice ?? (await repo.getVoice()), parsed.params, promptVersion, doctrine);
+      const record = await saveGeneration(repo, {
         stage: "refine",
         response,
         promptVersionId: promptVersion?.id
       });
-      const draftPostId = upsertDraft(repo, { draftPostId: parsed.draftPostId, finalText: response.content });
+      const draftPostId = await upsertDraft(repo, { draftPostId: parsed.draftPostId, finalText: response.content });
       res.json({ ...response, generationId: record.id, draftPostId });
     } catch (error) {
       next(error);
@@ -429,10 +452,10 @@ export function createRouter(repo: Repository) {
       }
       const before = desireScore(text);
       const weakExcerpts = before.sections.filter((section) => !section.hasWant).map((section) => section.excerpt);
-      const promptVersion = repo.getActivePromptVersion("refine");
-      const response = await runDesirePass(text, repo.getVoice(), weakExcerpts, promptVersion);
-      const record = saveGeneration(repo, { stage: "refine", response, promptVersionId: promptVersion?.id });
-      const draftPostId = upsertDraft(repo, { draftPostId: req.body?.draftPostId, finalText: response.content });
+      const promptVersion = await repo.getActivePromptVersion("refine");
+      const response = await runDesirePass(text, await repo.getVoice(), weakExcerpts, promptVersion);
+      const record = await saveGeneration(repo, { stage: "refine", response, promptVersionId: promptVersion?.id });
+      const draftPostId = await upsertDraft(repo, { draftPostId: req.body?.draftPostId, finalText: response.content });
       const after = desireScore(response.content);
       res.json({ ...response, before, after, draftPostId, generationId: record.id });
     } catch (error) {
@@ -458,12 +481,12 @@ export function createRouter(repo: Repository) {
     const send = (payload: Record<string, unknown>) => res.write(`data: ${JSON.stringify(payload)}\n\n`);
 
     try {
-      const voice = repo.getVoice();
+      const voice = await repo.getVoice();
       let brief: BriefInput | undefined;
       let retrieved: RetrievedPost[] = [];
       let system = "";
       let user = "";
-      let promptVersion = repo.getActivePromptVersion(stage);
+      let promptVersion = await repo.getActivePromptVersion(stage);
       let mockContent = "";
 
       if (stage === "frame") {
@@ -476,9 +499,9 @@ export function createRouter(repo: Repository) {
       } else if (stage === "draft") {
         const parsed = GenerateDraftRequestSchema.parse(req.body);
         brief = parsed.brief;
-        retrieved = await retrieve(repo, repo.listPosts(), brief, parsed.topK);
+        retrieved = await retrieve(repo, await repo.listPosts(), brief, parsed.topK);
         const posts = retrieved.map((item) => item.post);
-        const motifs = repo.getLatestVoiceDistillation()?.metaphors ?? [];
+        const motifs = (await repo.getLatestVoiceDistillation())?.metaphors ?? [];
         system = systemPrompt(voice);
         user = draftPrompt(brief, parsed.editedFrame ?? parsed.frame, posts, motifs, promptVersion);
         if (!process.env.OPENROUTER_API_KEY) {
@@ -512,7 +535,7 @@ export function createRouter(repo: Repository) {
       }
 
       const citations = extractCitationFlags(content);
-      const record = saveGeneration(repo, {
+      const record = await saveGeneration(repo, {
         stage,
         response: { content, provider, model, citations, usage },
         promptVersionId: promptVersion?.id,
@@ -542,7 +565,7 @@ export function createRouter(repo: Repository) {
       const parsed = WorkflowRunRequestSchema.parse(req.body);
       let stages = parsed.stages;
       if (!stages && parsed.workflowId) {
-        const recipe = repo.listWorkflowRecipes().find((item) => item.id === parsed.workflowId);
+        const recipe = (await repo.listWorkflowRecipes()).find((item) => item.id === parsed.workflowId);
         if (!recipe) {
           res.status(404).json({ error: "Workflow recipe not found" });
           return;
@@ -554,7 +577,7 @@ export function createRouter(repo: Repository) {
         return;
       }
       const result = await runWorkflow(repo, stages, parsed.brief, parsed.topK);
-      const draftPostId = upsertDraft(repo, {
+      const draftPostId = await upsertDraft(repo, {
         draftPostId: parsed.draftPostId,
         finalText: result.final,
         title: parsed.brief.topic
@@ -568,8 +591,8 @@ export function createRouter(repo: Repository) {
   router.post("/generate/discover", async (req, res, next) => {
     try {
       const parsed = DiscoverRequestSchema.parse(req.body);
-      const ideas = await runDiscover(repo.listPosts(), repo.getVoice(), parsed.limit, repo.getActivePromptVersion("discover"));
-      res.json(repo.saveIdeas(ideas));
+      const ideas = await runDiscover(await repo.listPosts(), await repo.getVoice(), parsed.limit, await repo.getActivePromptVersion("discover"));
+      res.json(await repo.saveIdeas(ideas));
     } catch (error) {
       next(error);
     }
@@ -582,8 +605,8 @@ export function createRouter(repo: Repository) {
         res.status(400).json({ error: "finalText is required" });
         return;
       }
-      const seo = await runSeo(finalText, repo.getActivePromptVersion("seo"));
-      res.json(repo.saveSeo({ ...seo, postId: req.body?.postId }));
+      const seo = await runSeo(finalText, await repo.getActivePromptVersion("seo"));
+      res.json(await repo.saveSeo({ ...seo, postId: req.body?.postId }));
     } catch (error) {
       next(error);
     }
@@ -598,10 +621,10 @@ export function createRouter(repo: Repository) {
       }
       const style = req.body?.style ? String(req.body.style) : "editorial";
       const title = req.body?.title ? String(req.body.title) : undefined;
-      const identity = repo.activeVisualIdentityPrompt();
-      const image = await runImage(finalText, repo.getActivePromptVersion("image"), { style, identity, role: "cover", title });
-      recordImageCost(repo, image);
-      res.json(repo.saveImage({ ...image, postId: req.body?.postId, role: "cover", style }));
+      const identity = await repo.activeVisualIdentityPrompt();
+      const image = await runImage(finalText, await repo.getActivePromptVersion("image"), { style, identity, role: "cover", title });
+      await recordImageCost(repo, image);
+      res.json(await repo.saveImage({ ...image, postId: req.body?.postId, role: "cover", style }));
     } catch (error) {
       next(error);
     }
@@ -621,19 +644,19 @@ export function createRouter(repo: Repository) {
       const title = req.body?.title ? String(req.body.title) : undefined;
       const n = Math.max(1, Math.min(5, Number(req.body?.n ?? 3)));
       const postId = req.body?.postId as string | undefined;
-      const identity = repo.activeVisualIdentityPrompt();
-      const promptVersion = repo.getActivePromptVersion("image");
+      const identity = await repo.activeVisualIdentityPrompt();
+      const promptVersion = await repo.getActivePromptVersion("image");
 
       const coverImg = await runImage(finalText, promptVersion, { style, identity, role: "cover", title });
-      recordImageCost(repo, coverImg);
-      const cover = repo.saveImage({ ...coverImg, postId, role: "cover", style });
+      await recordImageCost(repo, coverImg);
+      const cover = await repo.saveImage({ ...coverImg, postId, role: "cover", style });
 
       const beats = await extractBeats(finalText, n);
       const sections = [];
       for (const beat of beats) {
         const img = await runImage(beat.scene, promptVersion, { style, identity, role: "section" });
-        recordImageCost(repo, img);
-        sections.push(repo.saveImage({ ...img, postId, role: "section", style, caption: beat.anchor }));
+        await recordImageCost(repo, img);
+        sections.push(await repo.saveImage({ ...img, postId, role: "section", style, caption: beat.anchor }));
       }
       res.json({ cover, sections });
     } catch (error) {
@@ -641,12 +664,12 @@ export function createRouter(repo: Repository) {
     }
   });
 
-  router.get("/posts/:id/images", (req, res) => res.json(repo.listImagesForPost(req.params.id)));
+  router.get("/posts/:id/images", async (req, res) => res.json(await repo.listImagesForPost(req.params.id)));
 
-  router.get("/shows/:id/visual-identity", (req, res) => res.json(repo.getVisualIdentity(req.params.id)));
-  router.put("/shows/:id/visual-identity", (req, res) => {
+  router.get("/shows/:id/visual-identity", async (req, res) => res.json(await repo.getVisualIdentity(req.params.id)));
+  router.put("/shows/:id/visual-identity", async (req, res) => {
     const parsed = VisualIdentitySchema.parse(req.body);
-    res.json(repo.setVisualIdentity(req.params.id, parsed));
+    res.json(await repo.setVisualIdentity(req.params.id, parsed));
   });
 
   router.post("/package/repurpose", async (req, res, next) => {
@@ -656,31 +679,31 @@ export function createRouter(repo: Repository) {
         res.status(400).json({ error: "finalText is required" });
         return;
       }
-      const pack = await runRepurpose(finalText, repo.getVoice(), repo.getActivePromptVersion("repurpose"));
-      repo.saveRepurpose({ ...pack, postId: req.body?.postId });
+      const pack = await runRepurpose(finalText, await repo.getVoice(), await repo.getActivePromptVersion("repurpose"));
+      await repo.saveRepurpose({ ...pack, postId: req.body?.postId });
       res.json(pack);
     } catch (error) {
       next(error);
     }
   });
 
-  router.get("/schedule", (_req, res) => res.json(repo.listSchedules()));
-  router.post("/schedule", (req, res) => {
+  router.get("/schedule", async (_req, res) => res.json(await repo.listSchedules()));
+  router.post("/schedule", async (req, res) => {
     const parsed = ScheduleInputSchema.parse(normalizeScheduleInput(req.body));
-    res.status(201).json(repo.createSchedule(parsed));
+    res.status(201).json(await repo.createSchedule(parsed));
   });
-  router.put("/schedule/:id", (req, res) => {
+  router.put("/schedule/:id", async (req, res) => {
     const parsed = ScheduleInputSchema.partial().parse(normalizeScheduleInput(req.body));
-    const entry = repo.updateSchedule(req.params.id, parsed);
+    const entry = await repo.updateSchedule(req.params.id, parsed);
     if (!entry) res.status(404).json({ error: "Schedule entry not found" });
     else res.json(entry);
   });
-  router.delete("/schedule/:id", (req, res) => {
-    res.json({ deleted: repo.deleteSchedule(req.params.id) });
+  router.delete("/schedule/:id", async (req, res) => {
+    res.json({ deleted: await repo.deleteSchedule(req.params.id) });
   });
 
-  router.get("/export/library", (_req, res) => {
-    const markdown = libraryMarkdown(repo.listPosts());
+  router.get("/export/library", async (_req, res) => {
+    const markdown = libraryMarkdown(await repo.listPosts());
     res.setHeader("Content-Type", "text/markdown; charset=utf-8");
     res.setHeader("Content-Disposition", "attachment; filename=gbedu-desk-library.md");
     res.send(markdown);
@@ -690,16 +713,16 @@ export function createRouter(repo: Repository) {
     res.json(extractCitationFlags(String(req.body?.text ?? "")));
   });
 
-  router.post("/quality/evaluate", (req, res) => {
+  router.post("/quality/evaluate", async (req, res) => {
     const parsed = QualityEvaluateRequestSchema.parse(req.body);
-    res.json(repo.saveQualityReport(evaluateQuality(parsed.text, parsed.generationId)));
+    res.json(await repo.saveQualityReport(evaluateQuality(parsed.text, parsed.generationId)));
   });
 
-  router.post("/quality/rewrite", (req, res) => {
+  router.post("/quality/rewrite", async (req, res) => {
     const parsed = QualityRewriteRequestSchema.parse(req.body);
     const revisedText = rewriteSlop(parsed.text);
     res.json(
-      repo.saveOutputRevision({
+      await repo.saveOutputRevision({
         reportId: parsed.reportId,
         originalText: parsed.text,
         revisedText
@@ -707,24 +730,24 @@ export function createRouter(repo: Repository) {
     );
   });
 
-  router.get("/generations", (_req, res) => res.json(repo.listGenerationRecords()));
-  router.get("/generations/:id", (req, res) => {
-    const record = repo.getGenerationRecord(req.params.id);
+  router.get("/generations", async (_req, res) => res.json(await repo.listGenerationRecords()));
+  router.get("/generations/:id", async (req, res) => {
+    const record = await repo.getGenerationRecord(req.params.id);
     if (!record) res.status(404).json({ error: "Generation not found" });
     else res.json(record);
   });
 
   // ---- The Grid (signal-to-fiction episode engine) ----
-  router.post("/grid/ensure", (_req, res) => res.json(repo.ensureGridShow()));
+  router.post("/grid/ensure", async (_req, res) => res.json(await repo.ensureGridShow()));
 
-  router.get("/grid/memory", (_req, res) => {
-    res.json({ bible: repo.getGridBible(), storyLog: repo.getGridStoryLog(), continuity: gridContinuity(repo) });
+  router.get("/grid/memory", async (_req, res) => {
+    res.json({ bible: await repo.getGridBible(), storyLog: await repo.getGridStoryLog(), continuity: await gridContinuity(repo) });
   });
-  router.put("/grid/memory", (req, res) => {
+  router.put("/grid/memory", async (req, res) => {
     const parsed = GridMemoryUpdateSchema.parse(req.body);
-    if (parsed.bible !== undefined) repo.setGridBible(parsed.bible);
-    if (parsed.storyLog !== undefined) repo.setGridStoryLog(parsed.storyLog);
-    res.json({ bible: repo.getGridBible(), storyLog: repo.getGridStoryLog(), continuity: gridContinuity(repo) });
+    if (parsed.bible !== undefined) await repo.setGridBible(parsed.bible);
+    if (parsed.storyLog !== undefined) await repo.setGridStoryLog(parsed.storyLog);
+    res.json({ bible: await repo.getGridBible(), storyLog: await repo.getGridStoryLog(), continuity: await gridContinuity(repo) });
   });
 
   router.post("/grid/signals", async (req, res, next) => {
@@ -732,7 +755,7 @@ export function createRouter(repo: Repository) {
       const parsed = GridSignalsRequestSchema.parse(req.body);
       const result = await runGridSignals(repo, parsed);
       for (const { stage, response } of result.responses) {
-        saveGeneration(repo, { stage, response, promptVersionId: response.promptVersionId });
+        await saveGeneration(repo, { stage, response, promptVersionId: response.promptVersionId });
       }
       res.json({
         deepDive: result.deepDive,
@@ -751,7 +774,7 @@ export function createRouter(repo: Repository) {
     try {
       const parsed = GridSynthesisRequestSchema.parse(req.body);
       const response = await runGridSynthesis(repo, parsed.signals);
-      saveGeneration(repo, { stage: "synthesis", response, promptVersionId: response.promptVersionId });
+      await saveGeneration(repo, { stage: "synthesis", response, promptVersionId: response.promptVersionId });
       res.json({ content: response.content, usage: response.usage });
     } catch (error) {
       next(error);
@@ -762,7 +785,7 @@ export function createRouter(repo: Repository) {
     try {
       const parsed = GridReviewGateRequestSchema.parse(req.body);
       const { response, continuity } = await runGridReviewGate(repo, parsed.synthesis);
-      saveGeneration(repo, { stage: "reviewgate", response, promptVersionId: response.promptVersionId });
+      await saveGeneration(repo, { stage: "reviewgate", response, promptVersionId: response.promptVersionId });
       res.json({ content: response.content, continuity });
     } catch (error) {
       next(error);
@@ -773,34 +796,34 @@ export function createRouter(repo: Repository) {
     try {
       const parsed = GridStoryRequestSchema.parse(req.body);
       const result = await runGridStory(repo, { reviewGate: parsed.reviewGate, signals: parsed.signals });
-      const record = saveGeneration(repo, {
+      const record = await saveGeneration(repo, {
         stage: "story",
         response: { content: result.content, provider: aiProvider(), model: "grid-story", usage: result.usage },
-        promptVersionId: repo.getActivePromptVersion("story")?.id
+        promptVersionId: (await repo.getActivePromptVersion("story"))?.id
       });
-      const draftPostId = upsertDraft(repo, { draftPostId: parsed.draftPostId, finalText: result.content });
+      const draftPostId = await upsertDraft(repo, { draftPostId: parsed.draftPostId, finalText: result.content });
       res.json({ content: result.content, rounds: result.rounds, problems: result.problems, generationId: record.id, draftPostId, usage: result.usage });
     } catch (error) {
       next(error);
     }
   });
 
-  router.post("/grid/publish", (req, res, next) => {
+  router.post("/grid/publish", async (req, res, next) => {
     try {
       const parsed = GridPublishRequestSchema.parse(req.body);
-      res.json(gridPublish(repo, parsed.story));
+      res.json(await gridPublish(repo, parsed.story));
     } catch (error) {
       next(error);
     }
   });
 
   // ---- Experiments (swarm: cheap fan-out → score/merge) ----
-  router.get("/experiments", (_req, res) => res.json(repo.listExperiments()));
+  router.get("/experiments", async (_req, res) => res.json(await repo.listExperiments()));
 
   router.post("/experiments/run", async (req, res, next) => {
     try {
       const parsed = ExperimentRunRequestSchema.parse(req.body);
-      const voice = repo.getVoice();
+      const voice = await repo.getVoice();
       const system = systemPrompt(voice);
 
       if (parsed.kind === "best-draft") {
@@ -808,21 +831,21 @@ export function createRouter(repo: Repository) {
           res.status(400).json({ error: "best-draft requires a brief" });
           return;
         }
-        const retrieved = await retrieve(repo, repo.listPosts(), parsed.brief, 3);
-        const motifs = repo.getLatestVoiceDistillation()?.metaphors ?? [];
-        const user = draftPrompt(parsed.brief, "", retrieved.map((item) => item.post), motifs, repo.getActivePromptVersion("draft"));
+        const retrieved = await retrieve(repo, await repo.listPosts(), parsed.brief, 3);
+        const motifs = (await repo.getLatestVoiceDistillation())?.metaphors ?? [];
+        const user = draftPrompt(parsed.brief, "", retrieved.map((item) => item.post), motifs, await repo.getActivePromptVersion("draft"));
         const results = await runSwarm(spreadVariants(system, user, parsed.n));
         const ranked = scoreDrafts(results);
         const cost = swarmCost(results);
         const expResults = ranked.map((item) => ({ label: item.label, content: item.content, score: item.score, verdict: item.verdict }));
-        const experiment = repo.createExperiment({
+        const experiment = await repo.createExperiment({
           name: parsed.name ?? `Best of ${parsed.n}`,
           kind: "best-draft",
           results: expResults,
           winner: ranked[0]?.label,
           cost
         });
-        const draftPostId = ranked[0] ? upsertDraft(repo, { draftPostId: parsed.draftPostId, finalText: ranked[0].content }) : undefined;
+        const draftPostId = ranked[0] ? await upsertDraft(repo, { draftPostId: parsed.draftPostId, finalText: ranked[0].content }) : undefined;
         res.json({ experiment, ranked: expResults, winner: ranked[0]?.label, cost, draftPostId });
         return;
       }
@@ -832,7 +855,7 @@ export function createRouter(repo: Repository) {
           res.status(400).json({ error: "ab-prompt requires stage, versionIds, and a brief" });
           return;
         }
-        const template = repo.getPromptByStage(parsed.stage);
+        const template = await repo.getPromptByStage(parsed.stage);
         const versions = (template?.versions ?? []).filter((version) => parsed.versionIds!.includes(version.id));
         if (versions.length === 0) {
           res.status(404).json({ error: "No matching prompt versions" });
@@ -860,7 +883,7 @@ export function createRouter(repo: Repository) {
           .map(([vId, agg]) => ({ vId, avg: agg.total / agg.n, version: versions.find((v) => v.id === vId)?.version }))
           .sort((a, b) => b.avg - a.avg);
         const expResults = scored.map((item) => ({ label: item.label, variant: item.label.split("::")[0], content: item.content, score: item.score, verdict: item.verdict }));
-        const experiment = repo.createExperiment({
+        const experiment = await repo.createExperiment({
           name: parsed.name ?? `A/B ${parsed.stage}`,
           kind: "ab-prompt",
           results: expResults,
@@ -895,7 +918,7 @@ export function createRouter(repo: Repository) {
             return { label: result.label, content: result.content, score: h.score, verdict: h.reasons.join(", ") };
           })
           .sort((a, b) => b.score - a.score);
-        const experiment = repo.createExperiment({
+        const experiment = await repo.createExperiment({
           name: parsed.name ?? "Hook lab",
           kind: "hook",
           results: ranked,
@@ -923,7 +946,7 @@ export function createRouter(repo: Repository) {
   });
 
   // ---- Concept knowledge-graph (territories) ----
-  router.get("/territories", (_req, res) => res.json(repo.listTerritories()));
+  router.get("/territories", async (_req, res) => res.json(await repo.listTerritories()));
 
   router.post("/graph/extract", async (req, res, next) => {
     try {
@@ -931,11 +954,11 @@ export function createRouter(repo: Repository) {
       let units: GraphUnit[] = parsed.units ?? [];
       if (units.length === 0) {
         if (parsed.kind === "archive") {
-          units = repo.listPosts().slice(0, 12).map((post) => ({ title: post.title, text: post.body }));
+          units = (await repo.listPosts()).slice(0, 12).map((post) => ({ title: post.title, text: post.body }));
         } else if (parsed.kind === "grid") {
           units = [
-            { title: "Universe Bible", text: repo.getGridBible() },
-            { title: "Story Log", text: repo.getGridStoryLog() }
+            { title: "Universe Bible", text: await repo.getGridBible() },
+            { title: "Story Log", text: await repo.getGridStoryLog() }
           ].filter((unit) => unit.text.trim().length > 0);
         }
       }
@@ -944,20 +967,20 @@ export function createRouter(repo: Repository) {
         return;
       }
       const graph = await extractGraph(units, parsed.n);
-      res.status(201).json(repo.createTerritory(parsed.name, parsed.kind, graph));
+      res.status(201).json(await repo.createTerritory(parsed.name, parsed.kind, graph));
     } catch (error) {
       next(error);
     }
   });
 
-  router.get("/graph/:id", (req, res) => {
-    const territory = repo.getTerritory(req.params.id);
+  router.get("/graph/:id", async (req, res) => {
+    const territory = await repo.getTerritory(req.params.id);
     if (!territory) res.status(404).json({ error: "Territory not found" });
     else res.json(territory);
   });
 
-  router.get("/graph/:id/reading-order", (req, res) => {
-    const territory = repo.getTerritory(req.params.id);
+  router.get("/graph/:id/reading-order", async (req, res) => {
+    const territory = await repo.getTerritory(req.params.id);
     if (!territory) {
       res.status(404).json({ error: "Territory not found" });
       return;
@@ -965,17 +988,17 @@ export function createRouter(repo: Repository) {
     res.json(topoOrder(territory.graph).map((node) => ({ id: node.id, name: node.name, difficulty: node.difficulty, gate: node.gate })));
   });
 
-  router.get("/graph/:id/gaps", (req, res) => {
-    const territory = repo.getTerritory(req.params.id);
+  router.get("/graph/:id/gaps", async (req, res) => {
+    const territory = await repo.getTerritory(req.params.id);
     if (!territory) res.status(404).json({ error: "Territory not found" });
     else res.json(graphGaps(territory.graph));
   });
 
-  router.delete("/graph/:id", (req, res) => res.json({ deleted: repo.deleteTerritory(req.params.id) }));
+  router.delete("/graph/:id", async (req, res) => res.json({ deleted: await repo.deleteTerritory(req.params.id) }));
 
   router.post("/graph/:id/navigate", async (req, res, next) => {
     try {
-      const territory = repo.getTerritory(req.params.id);
+      const territory = await repo.getTerritory(req.params.id);
       if (!territory) {
         res.status(404).json({ error: "Territory not found" });
         return;
@@ -989,7 +1012,7 @@ export function createRouter(repo: Repository) {
         `Uncovered prerequisites: ${g.missingPrerequisites.join(", ") || "none"}`,
         `Low-confidence concepts: ${g.lowConfidence.map((n) => n.name).join(", ") || "none"}`
       ].join("\n");
-      const response = await runStage("study-skill", repo.getVoice(), context, undefined, repo.getActivePromptVersion("study-skill"));
+      const response = await runStage("study-skill", await repo.getVoice(), context, undefined, await repo.getActivePromptVersion("study-skill"));
       res.json({ plan: response.content });
     } catch (error) {
       next(error);
@@ -1007,14 +1030,14 @@ export function createRouter(repo: Repository) {
 // Persist a completed final as a "living" draft post so a paid run is never
 // lost. With a draftPostId it updates that draft in place (one piece = one
 // draft); otherwise it creates a new draft. Returns the draft's id.
-function upsertDraft(repo: Repository, input: { draftPostId?: string; finalText: string; title?: string }) {
+async function upsertDraft(repo: Repository, input: { draftPostId?: string; finalText: string; title?: string }) {
   const title =
     input.title?.trim() || input.finalText.match(/^#\s+(.+)$/m)?.[1]?.trim() || "Untitled draft";
   if (input.draftPostId) {
-    const updated = repo.updatePost(input.draftPostId, { title, body: input.finalText, status: "draft" });
+    const updated = await repo.updatePost(input.draftPostId, { title, body: input.finalText, status: "draft" });
     if (updated) return updated.id;
   }
-  return repo.createPost({ title, body: input.finalText, status: "draft", tags: [] }).id;
+  return (await repo.createPost({ title, body: input.finalText, status: "draft", tags: [] })).id;
 }
 
 // Run an ordered stage list, threading each stage's output into the next. The
@@ -1022,8 +1045,8 @@ function upsertDraft(repo: Repository, input: { draftPostId?: string; finalText:
 // every stage is persisted as a generation record. Returns the stage chain and
 // the final stage's content.
 async function runWorkflow(repo: Repository, stages: PromptStage[], brief: BriefInput, topK: number) {
-  const voice = repo.getVoice();
-  const retrieved = topK > 0 ? await retrieve(repo, repo.listPosts(), brief, topK) : [];
+  const voice = await repo.getVoice();
+  const retrieved = topK > 0 ? await retrieve(repo, await repo.listPosts(), brief, topK) : [];
   const retrievedPosts = retrieved.map((item) => item.post);
   const retrievedPostIds = retrieved.map((item) => item.post.id);
   const results: WorkflowStageResult[] = [];
@@ -1031,10 +1054,10 @@ async function runWorkflow(repo: Repository, stages: PromptStage[], brief: Brief
 
   for (let index = 0; index < stages.length; index += 1) {
     const stage = stages[index];
-    const promptVersion = repo.getActivePromptVersion(stage);
+    const promptVersion = await repo.getActivePromptVersion(stage);
     const memory = index === 0 ? retrievedPosts : [];
     const response = await runStage(stage, voice, carry, brief, promptVersion, memory);
-    const record = saveGeneration(repo, {
+    const record = await saveGeneration(repo, {
       stage,
       response,
       promptVersionId: promptVersion?.id,
@@ -1056,7 +1079,7 @@ async function runWorkflow(repo: Repository, stages: PromptStage[], brief: Brief
   return { stages: results, final: carry };
 }
 
-function saveGeneration(
+async function saveGeneration(
   repo: Repository,
   input: {
     stage: PromptStage;
@@ -1090,12 +1113,12 @@ function saveGeneration(
 // total + History). Only real (openrouter) generations are logged; the /images
 // endpoint doesn't return token usage, so cost is the response cost or the
 // IMAGE_COST_USD estimate (undefined → shows in History without a $ figure).
-function recordImageCost(
+async function recordImageCost(
   repo: Repository,
   image: { prompt: string; provider: "mock" | "openrouter"; model: string; cost?: number }
 ) {
   if (image.provider !== "openrouter") return;
-  repo.createGenerationRecord({
+  await repo.createGenerationRecord({
     stage: "image",
     content: image.prompt,
     provider: image.provider,
@@ -1129,9 +1152,9 @@ function normalizeScheduleInput(input: Partial<ScheduleEntry>) {
   };
 }
 
-function libraryMarkdown(posts: ReturnType<Repository["listPosts"]>) {
+function libraryMarkdown(posts: Awaited<ReturnType<Repository["listPosts"]>>) {
   return [
-    "# Gbedu Desk Library Export",
+    "# Co-Create Library Export",
     "",
     `Exported: ${new Date().toISOString()}`,
     "",

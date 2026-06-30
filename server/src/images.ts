@@ -1,9 +1,6 @@
 // Image generation via OpenRouter's dedicated images endpoint
 // (POST /api/v1/images → { data: [{ b64_json }] }). Replaces the old approach of
 // regex-grepping a URL out of a chat completion (which images don't return).
-import { createHash } from "node:crypto";
-import { mkdirSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
 
 export function imageModel(): string {
   return process.env.MODEL_IMAGE ?? "google/gemini-3-pro-image-preview";
@@ -32,34 +29,15 @@ export function imageStyleDirective(style?: string): string {
   }
 }
 
-// ---- File-backed image storage ----------------------------------------------
-// Base64 PNGs from the images endpoint are ~1–2 MB each; storing them inline in
-// SQLite bloats the DB once a single piece generates 4–6 images. Persist large
-// raster data URLs to disk and store a served path (/api/images/<file>) instead.
-// Small SVG placeholders (mock mode) and already-served paths/URLs pass through.
-
-export function imageDir(): string {
-  return process.env.IMAGE_DIR ?? join(process.cwd(), "data", "images");
-}
-
-export function persistImage(url: string): string {
-  const match = /^data:image\/(png|jpeg|jpg|webp);base64,(.+)$/s.exec(url);
-  if (!match) return url; // svg data URLs, http(s), or already a /api/images path
-  const ext = match[1] === "jpeg" ? "jpg" : match[1];
-  const b64 = match[2];
-  const dir = imageDir();
-  mkdirSync(dir, { recursive: true });
-  const file = `${createHash("sha1").update(b64).digest("hex").slice(0, 24)}.${ext}`;
-  writeFileSync(join(dir, file), Buffer.from(b64, "base64"));
-  return `/api/images/${file}`;
-}
+// Image bytes are now persisted in Postgres (image_assets.data bytea) by
+// repository.saveImage and served from /api/images/:id — no disk storage here.
 
 function headers() {
   return {
     "Content-Type": "application/json",
     Authorization: `Bearer ${process.env.OPENROUTER_API_KEY}`,
     "HTTP-Referer": "http://localhost:5173",
-    "X-Title": "Gbedu Desk"
+    "X-Title": "Co-Create"
   };
 }
 
@@ -68,7 +46,7 @@ export function mockImage(prompt: string): string {
   const hue = Math.abs([...prompt].reduce((acc, ch) => (acc * 31 + ch.charCodeAt(0)) | 0, 7)) % 360;
   const label = prompt.replace(/[<>&]/g, " ").slice(0, 40);
   const svg = encodeURIComponent(
-    `<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="630"><defs><linearGradient id="g" x1="0" y1="0" x2="1" y2="1"><stop stop-color="hsl(${hue} 45% 18%)"/><stop offset="1" stop-color="hsl(${(hue + 40) % 360} 60% 45%)"/></linearGradient></defs><rect width="1200" height="630" fill="url(#g)"/><circle cx="920" cy="180" r="130" fill="#ffffff" opacity=".15"/><text x="80" y="120" fill="#f8fafc" font-family="Arial" font-size="46" font-weight="700">Gbedu Desk</text><text x="82" y="180" fill="#e2e8f0" font-family="Arial" font-size="26">${label}</text></svg>`
+    `<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="630"><defs><linearGradient id="g" x1="0" y1="0" x2="1" y2="1"><stop stop-color="hsl(${hue} 45% 18%)"/><stop offset="1" stop-color="hsl(${(hue + 40) % 360} 60% 45%)"/></linearGradient></defs><rect width="1200" height="630" fill="url(#g)"/><circle cx="920" cy="180" r="130" fill="#ffffff" opacity=".15"/><text x="80" y="120" fill="#f8fafc" font-family="Arial" font-size="46" font-weight="700">Co-Create</text><text x="82" y="180" fill="#e2e8f0" font-family="Arial" font-size="26">${label}</text></svg>`
   );
   return `data:image/svg+xml,${svg}`;
 }

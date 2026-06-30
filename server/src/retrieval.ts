@@ -3,8 +3,8 @@ import { cosine, embedModel, embedTexts, embeddingsEnabled } from "./embeddings"
 
 // Structural interface so retrieval stays decoupled from the concrete Repository.
 export interface EmbeddingStore {
-  getPostEmbedding(postId: string, model: string): number[] | undefined;
-  savePostEmbedding(postId: string, model: string, vector: number[]): void;
+  getPostEmbedding(postId: string, model: string): Promise<number[] | undefined>;
+  savePostEmbedding(postId: string, model: string, vector: number[]): Promise<void>;
 }
 
 const STOPWORDS = new Set([
@@ -107,17 +107,26 @@ export async function retrieve(
 
   try {
     const model = embedModel();
-    const missing = posts.filter((post) => !store.getPostEmbedding(post.id, model));
+    // Load existing vectors up front (async store), then embed any that are missing.
+    const cache = new Map<string, number[]>();
+    for (const post of posts) {
+      const vector = await store.getPostEmbedding(post.id, model);
+      if (vector) cache.set(post.id, vector);
+    }
+    const missing = posts.filter((post) => !cache.has(post.id));
     if (missing.length > 0) {
       const vectors = await embedTexts(missing.map(postEmbeddingInput));
-      missing.forEach((post, index) => store.savePostEmbedding(post.id, model, vectors[index]));
+      for (let index = 0; index < missing.length; index += 1) {
+        await store.savePostEmbedding(missing[index].id, model, vectors[index]);
+        cache.set(missing[index].id, vectors[index]);
+      }
     }
     const queryVector = (await embedTexts([query]))[0];
     const queryTerms = new Set(tokenize(query));
 
     const ranked = posts
       .map((post) => {
-        const vector = store.getPostEmbedding(post.id, model);
+        const vector = cache.get(post.id);
         if (!vector) return undefined;
         const haystack = new Set(tokenize(`${post.title} ${post.tags.join(" ")} ${post.body}`));
         const matchedTerms = Array.from(queryTerms).filter((term) => haystack.has(term));

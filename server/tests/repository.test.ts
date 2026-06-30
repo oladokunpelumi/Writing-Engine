@@ -4,22 +4,22 @@ import { openDatabase } from "../src/db";
 import { Repository } from "../src/repository";
 
 describe("repository", () => {
-  it("persists voice, posts, and schedule entries", () => {
-    const repo = new Repository(openDatabase(":memory:"));
-    const voice = repo.getVoice();
-    const updatedVoice = repo.updateVoice({ ...voice, register: "Sharper, warmer, slower." });
+  it("persists voice, posts, and schedule entries", async () => {
+    const repo = new Repository(await openDatabase());
+    const voice = await repo.getVoice();
+    const updatedVoice = await repo.updateVoice({ ...voice, register: "Sharper, warmer, slower." });
     expect(updatedVoice.register).toBe("Sharper, warmer, slower.");
 
-    const post = repo.createPost({
+    const post = await repo.createPost({
       title: "A test post",
       body: "Faith and writing need a patient structure.",
       status: "imported",
       tags: ["faith", "writing"]
     });
-    expect(repo.listPosts()).toHaveLength(1);
+    expect(await repo.listPosts()).toHaveLength(1);
     expect(post.wordCount).toBe(7);
 
-    const schedule = repo.createSchedule({
+    const schedule = await repo.createSchedule({
       title: "Publish the test post",
       postId: post.id,
       targetDate: "2026-06-20",
@@ -34,18 +34,18 @@ describe("repository", () => {
       }
     });
     expect(schedule.status).toBe("ready");
-    expect(repo.listSchedules()[0].title).toBe("Publish the test post");
+    expect((await repo.listSchedules())[0].title).toBe("Publish the test post");
   });
 
-  it("persists corpus segments, brief seeds, and workflow recipes idempotently", () => {
-    const repo = new Repository(openDatabase(":memory:"));
-    const source = repo.upsertCorpusSource({
+  it("persists corpus segments, brief seeds, and workflow recipes idempotently", async () => {
+    const repo = new Repository(await openDatabase());
+    const source = await repo.upsertCorpusSource({
       path: "/tmp/Prompts & Writings.md",
       name: "Prompts & Writings.md",
       checksum: "abc123",
       segmentCount: 1
     });
-    const segment = repo.upsertCorpusSegment(source.id, {
+    const segment = await repo.upsertCorpusSegment(source.id, {
       sourcePath: source.path,
       title: "Competence and Pattern Notes",
       body: "Observe the room. Follow the pattern. Then improve the pattern.",
@@ -64,12 +64,12 @@ describe("repository", () => {
         researchGrounding: false
       }
     });
-    const updated = repo.upsertCorpusSegment(source.id, { ...segment, body: "Observe. Align. Improve." });
-    expect(repo.listCorpusSegments()).toHaveLength(1);
+    const updated = await repo.upsertCorpusSegment(source.id, { ...segment, body: "Observe. Align. Improve." });
+    expect(await repo.listCorpusSegments()).toHaveLength(1);
     expect(updated.id).toBe(segment.id);
     expect(updated.body).toBe("Observe. Align. Improve.");
 
-    const seed = repo.upsertBriefSeed(
+    const seed = await repo.upsertBriefSeed(
       {
         title: "Competence and Pattern Notes",
         topic: "competence",
@@ -81,12 +81,12 @@ describe("repository", () => {
       },
       segment.id
     );
-    expect(repo.listBriefSeeds()).toHaveLength(1);
-    expect(repo.briefFromSeed(seed.id)?.corpusSegmentId).toBe(segment.id);
+    expect(await repo.listBriefSeeds()).toHaveLength(1);
+    expect((await repo.briefFromSeed(seed.id))?.corpusSegmentId).toBe(segment.id);
 
-    const workflow = repo.upsertWorkflowRecipe(DEFAULT_WORKFLOW_RECIPE);
-    const sameWorkflow = repo.upsertWorkflowRecipe(DEFAULT_WORKFLOW_RECIPE);
+    const workflow = await repo.upsertWorkflowRecipe(DEFAULT_WORKFLOW_RECIPE);
+    const sameWorkflow = await repo.upsertWorkflowRecipe(DEFAULT_WORKFLOW_RECIPE);
     expect(workflow.id).toBe(sameWorkflow.id);
-    expect(repo.listWorkflowRecipes()).toHaveLength(1);
+    expect(await repo.listWorkflowRecipes()).toHaveLength(1);
   });
 });

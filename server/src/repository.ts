@@ -38,7 +38,6 @@ import { DEFAULT_PROMPT_TEMPLATES, DEFAULT_VOICE_PROFILE, DEFAULT_WORKFLOW_RECIP
 import { GRID_PROMPT_TEMPLATES, GRID_RECIPE, GRID_VOICE_PROFILE } from "./gridContent";
 import type { AppDatabase } from "./db";
 import { ownerContext } from "./context";
-import { persistImage } from "./images";
 
 const now = () => new Date().toISOString();
 const json = (value: unknown) => JSON.stringify(value);
@@ -65,121 +64,123 @@ export class Repository {
 
   // Run once at startup: seed global engine config (prompts/workflows) and port
   // any legacy single-voice kv record into the multi-voice table for the owner.
-  seedDefaults() {
-    this.seedDefaultPrompts();
-    this.seedDefaultWorkflows();
-    this.migrateLegacyVoice();
+  async seedDefaults() {
+    await this.seedDefaultPrompts();
+    await this.seedDefaultWorkflows();
+    await this.migrateLegacyVoice();
   }
 
   // ---- Voice profiles (multi-voice, per owner) ----
 
-  private activeVoiceId(): string | undefined {
-    const row = this.db.prepare("SELECT value FROM kv WHERE key = ?").get(`activeVoiceId:${this.owner}`);
+  private async activeVoiceId(): Promise<string | undefined> {
+    const row = await this.db.prepare("SELECT value FROM kv WHERE key = ?").get(`activeVoiceId:${this.owner}`);
     return row?.value ? String(row.value) : undefined;
   }
 
-  setActiveVoice(id: string): void {
-    this.db.prepare("INSERT OR REPLACE INTO kv (key, value) VALUES (?, ?)").run(`activeVoiceId:${this.owner}`, id);
+  async setActiveVoice(id: string): Promise<void> {
+    await this.db.prepare("INSERT INTO kv (key, value) VALUES (?, ?) ON CONFLICT (key) DO UPDATE SET value=EXCLUDED.value").run(`activeVoiceId:${this.owner}`, id);
   }
 
-  listVoices(): VoiceProfile[] {
-    return this.db
-      .prepare("SELECT profile FROM voice_profiles WHERE owner_id = ? ORDER BY datetime(created_at) ASC")
-      .all(this.owner)
+  async listVoices(): Promise<VoiceProfile[]> {
+    return (await this.db
+      .prepare("SELECT profile FROM voice_profiles WHERE owner_id = ? ORDER BY created_at ASC")
+      .all(this.owner))
       .map((row) => parse<VoiceProfile>(String(row.profile), DEFAULT_VOICE_PROFILE));
   }
 
-  getVoiceById(id: string): VoiceProfile | undefined {
-    const row = this.db.prepare("SELECT profile FROM voice_profiles WHERE id = ? AND owner_id = ?").get(id, this.owner);
+  async getVoiceById(id: string): Promise<VoiceProfile | undefined> {
+    const row = await this.db.prepare("SELECT profile FROM voice_profiles WHERE id = ? AND owner_id = ?").get(id, this.owner);
     return row?.profile ? parse<VoiceProfile>(String(row.profile), DEFAULT_VOICE_PROFILE) : undefined;
   }
 
   // The active voice (pipeline calls this). Auto-creates a Default if the owner has none.
-  getVoice(): VoiceProfile {
-    const voices = this.listVoices();
-    if (voices.length === 0) return this.createVoice("Default", DEFAULT_VOICE_PROFILE);
-    return voices.find((voice) => voice.id === this.activeVoiceId()) ?? voices[0];
+  async getVoice(): Promise<VoiceProfile> {
+    const voices = await this.listVoices();
+    if (voices.length === 0) return await this.createVoice("Default", DEFAULT_VOICE_PROFILE);
+    const activeId = await this.activeVoiceId();
+    return voices.find((voice) => voice.id === activeId) ?? voices[0];
   }
 
-  createVoice(name: string, base: VoiceProfile = DEFAULT_VOICE_PROFILE): VoiceProfile {
+  async createVoice(name: string, base: VoiceProfile = DEFAULT_VOICE_PROFILE): Promise<VoiceProfile> {
     const id = randomUUID();
     const profile: VoiceProfile = { ...base, id, name, updatedAt: now() };
     const ts = now();
-    this.db
+    await this.db
       .prepare("INSERT INTO voice_profiles (id, owner_id, name, profile, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)")
       .run(id, this.owner, name, json(profile), ts, ts);
-    if (!this.activeVoiceId()) this.setActiveVoice(id);
+    if (!(await this.activeVoiceId())) await this.setActiveVoice(id);
     return profile;
   }
 
-  updateVoiceById(id: string, input: VoiceProfile): VoiceProfile | undefined {
-    const existing = this.getVoiceById(id);
+  async updateVoiceById(id: string, input: VoiceProfile): Promise<VoiceProfile | undefined> {
+    const existing = await this.getVoiceById(id);
     if (!existing) return undefined;
     const profile: VoiceProfile = { ...input, id, name: input.name || existing.name, updatedAt: now() };
-    this.db
+    await this.db
       .prepare("UPDATE voice_profiles SET name = ?, profile = ?, updated_at = ? WHERE id = ? AND owner_id = ?")
       .run(profile.name, json(profile), profile.updatedAt, id, this.owner);
     return profile;
   }
 
   // Back-compat: PUT /voice updates the active profile (or the posted id if it's the owner's).
-  updateVoice(input: VoiceProfile): VoiceProfile {
-    const targetId = input.id && this.getVoiceById(input.id) ? input.id : this.getVoice().id;
-    return this.updateVoiceById(targetId, input) ?? this.createVoice(input.name || "Default", input);
+  async updateVoice(input: VoiceProfile): Promise<VoiceProfile> {
+    const targetId = input.id && (await this.getVoiceById(input.id)) ? input.id : (await this.getVoice()).id;
+    return (await this.updateVoiceById(targetId, input)) ?? (await this.createVoice(input.name || "Default", input));
   }
 
-  deleteVoice(id: string): boolean {
-    const changes = this.db.prepare("DELETE FROM voice_profiles WHERE id = ? AND owner_id = ?").run(id, this.owner).changes;
-    if (this.activeVoiceId() === id) {
-      const next = this.listVoices()[0];
-      if (next) this.setActiveVoice(next.id);
+  async deleteVoice(id: string): Promise<boolean> {
+    const rows = await this.db.prepare("DELETE FROM voice_profiles WHERE id = ? AND owner_id = ? RETURNING id").all(id, this.owner);
+    if ((await this.activeVoiceId()) === id) {
+      const next = (await this.listVoices())[0];
+      if (next) await this.setActiveVoice(next.id);
     }
-    return changes > 0;
+    return rows.length > 0;
   }
 
-  private migrateLegacyVoice() {
-    const count = this.db.prepare("SELECT COUNT(*) AS c FROM voice_profiles WHERE owner_id = ?").get(this.owner);
+  private async migrateLegacyVoice() {
+    const count = await this.db.prepare("SELECT COUNT(*) AS c FROM voice_profiles WHERE owner_id = ?").get(this.owner);
     if (Number(count?.c ?? 0) > 0) return;
-    const row = this.db.prepare("SELECT value FROM kv WHERE key = ?").get("voice");
+    const row = await this.db.prepare("SELECT value FROM kv WHERE key = ?").get("voice");
     const base = row?.value ? parse<VoiceProfile>(String(row.value), DEFAULT_VOICE_PROFILE) : DEFAULT_VOICE_PROFILE;
-    this.createVoice(base.name || "Default", base);
+    await this.createVoice(base.name || "Default", base);
   }
 
   // ---- Shows / content lines (per owner) ----
 
-  private activeShowId(): string | undefined {
-    const row = this.db.prepare("SELECT value FROM kv WHERE key = ?").get(`activeShowId:${this.owner}`);
+  private async activeShowId(): Promise<string | undefined> {
+    const row = await this.db.prepare("SELECT value FROM kv WHERE key = ?").get(`activeShowId:${this.owner}`);
     return row?.value ? String(row.value) : undefined;
   }
 
-  listShows(): Show[] {
-    this.ensureDefaultShow();
-    return this.db
-      .prepare("SELECT * FROM shows WHERE owner_id = ? ORDER BY datetime(created_at) ASC")
-      .all(this.owner)
+  async listShows(): Promise<Show[]> {
+    await this.ensureDefaultShow();
+    return (await this.db
+      .prepare("SELECT * FROM shows WHERE owner_id = ? ORDER BY created_at ASC")
+      .all(this.owner))
       .map(rowToShow);
   }
 
-  getShow(id: string): Show | undefined {
-    const row = this.db.prepare("SELECT * FROM shows WHERE id = ? AND owner_id = ?").get(id, this.owner);
+  async getShow(id: string): Promise<Show | undefined> {
+    const row = await this.db.prepare("SELECT * FROM shows WHERE id = ? AND owner_id = ?").get(id, this.owner);
     return row ? rowToShow(row) : undefined;
   }
 
-  getActiveShow(): Show {
-    const shows = this.listShows();
-    return shows.find((show) => show.id === this.activeShowId()) ?? shows[0];
+  async getActiveShow(): Promise<Show> {
+    const shows = await this.listShows();
+    const activeId = await this.activeShowId();
+    return shows.find((show) => show.id === activeId) ?? shows[0];
   }
 
   // Switching show also switches the active voice to the show's voice.
-  setActiveShow(id: string): Show | undefined {
-    const show = this.getShow(id);
+  async setActiveShow(id: string): Promise<Show | undefined> {
+    const show = await this.getShow(id);
     if (!show) return undefined;
-    this.db.prepare("INSERT OR REPLACE INTO kv (key, value) VALUES (?, ?)").run(`activeShowId:${this.owner}`, id);
-    if (show.voiceId && this.getVoiceById(show.voiceId)) this.setActiveVoice(show.voiceId);
+    await this.db.prepare("INSERT INTO kv (key, value) VALUES (?, ?) ON CONFLICT (key) DO UPDATE SET value=EXCLUDED.value").run(`activeShowId:${this.owner}`, id);
+    if (show.voiceId && (await this.getVoiceById(show.voiceId))) await this.setActiveVoice(show.voiceId);
     return show;
   }
 
-  createShow(input: ShowInput): Show {
+  async createShow(input: ShowInput): Promise<Show> {
     const id = randomUUID();
     const ts = now();
     const show: Show = {
@@ -192,17 +193,17 @@ export class Repository {
       createdAt: ts,
       updatedAt: ts
     };
-    this.db
+    await this.db
       .prepare(
         "INSERT INTO shows (id, owner_id, name, kind, description, voice_id, recipe_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)"
       )
       .run(id, this.owner, show.name, show.kind, show.description, show.voiceId ?? null, show.recipeId ?? null, ts, ts);
-    if (!this.activeShowId()) this.setActiveShow(id);
+    if (!(await this.activeShowId())) await this.setActiveShow(id);
     return show;
   }
 
-  updateShow(id: string, input: Partial<ShowInput>): Show | undefined {
-    const existing = this.getShow(id);
+  async updateShow(id: string, input: Partial<ShowInput>): Promise<Show | undefined> {
+    const existing = await this.getShow(id);
     if (!existing) return undefined;
     const show: Show = {
       ...existing,
@@ -210,7 +211,7 @@ export class Repository {
       description: input.description ?? existing.description,
       updatedAt: now()
     };
-    this.db
+    await this.db
       .prepare(
         "UPDATE shows SET name = ?, kind = ?, description = ?, voice_id = ?, recipe_id = ?, updated_at = ? WHERE id = ? AND owner_id = ?"
       )
@@ -218,62 +219,62 @@ export class Repository {
     return show;
   }
 
-  deleteShow(id: string): boolean {
-    const changes = this.db.prepare("DELETE FROM shows WHERE id = ? AND owner_id = ?").run(id, this.owner).changes;
-    if (this.activeShowId() === id) {
-      const next = this.listShows()[0];
-      if (next) this.setActiveShow(next.id);
+  async deleteShow(id: string): Promise<boolean> {
+    const rows = await this.db.prepare("DELETE FROM shows WHERE id = ? AND owner_id = ? RETURNING id").all(id, this.owner);
+    if ((await this.activeShowId()) === id) {
+      const next = (await this.listShows())[0];
+      if (next) await this.setActiveShow(next.id);
     }
-    return changes > 0;
+    return rows.length > 0;
   }
 
   // Each owner gets a default "Substack Essays" show on first access, pointing at
   // their active voice — so existing essay behavior is unchanged.
-  private ensureDefaultShow() {
-    const count = this.db.prepare("SELECT COUNT(*) AS c FROM shows WHERE owner_id = ?").get(this.owner);
+  private async ensureDefaultShow() {
+    const count = await this.db.prepare("SELECT COUNT(*) AS c FROM shows WHERE owner_id = ?").get(this.owner);
     if (Number(count?.c ?? 0) > 0) return;
     const id = randomUUID();
     const ts = now();
-    const voiceId = this.getVoice().id;
-    this.db
+    const voiceId = (await this.getVoice()).id;
+    await this.db
       .prepare(
         "INSERT INTO shows (id, owner_id, name, kind, description, voice_id, recipe_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)"
       )
       .run(id, this.owner, "Substack Essays", "essay", "Your default essay line: brief → frame → draft → sharpen → package.", voiceId, null, ts, ts);
-    if (!this.activeShowId()) {
-      this.db.prepare("INSERT OR REPLACE INTO kv (key, value) VALUES (?, ?)").run(`activeShowId:${this.owner}`, id);
+    if (!(await this.activeShowId())) {
+      await this.db.prepare("INSERT INTO kv (key, value) VALUES (?, ?) ON CONFLICT (key) DO UPDATE SET value=EXCLUDED.value").run(`activeShowId:${this.owner}`, id);
     }
   }
 
   // ---- Users / auth ----
 
-  createUser(email: string, passwordHash: string) {
+  async createUser(email: string, passwordHash: string) {
     const id = randomUUID();
-    this.db
+    await this.db
       .prepare("INSERT INTO users (id, email, password_hash, created_at) VALUES (?, ?, ?, ?)")
       .run(id, email.toLowerCase(), passwordHash, now());
     return { id, email: email.toLowerCase() };
   }
 
-  getUserByEmail(email: string) {
-    const row = this.db.prepare("SELECT * FROM users WHERE email = ?").get(email.toLowerCase());
+  async getUserByEmail(email: string) {
+    const row = await this.db.prepare("SELECT * FROM users WHERE email = ?").get(email.toLowerCase());
     if (!row) return undefined;
     return { id: String(row.id), email: String(row.email), passwordHash: String(row.password_hash) };
   }
 
-  listPosts(): Post[] {
-    return this.db
-      .prepare("SELECT * FROM posts WHERE owner_id = ? ORDER BY datetime(created_at) DESC")
-      .all(this.owner)
+  async listPosts(): Promise<Post[]> {
+    return (await this.db
+      .prepare("SELECT * FROM posts WHERE owner_id = ? ORDER BY created_at DESC")
+      .all(this.owner))
       .map(rowToPost);
   }
 
-  getPost(id: string): Post | undefined {
-    const row = this.db.prepare("SELECT * FROM posts WHERE id = ? AND owner_id = ?").get(id, this.owner);
+  async getPost(id: string): Promise<Post | undefined> {
+    const row = await this.db.prepare("SELECT * FROM posts WHERE id = ? AND owner_id = ?").get(id, this.owner);
     return row ? rowToPost(row) : undefined;
   }
 
-  createPost(input: PostInput): Post {
+  async createPost(input: PostInput): Promise<Post> {
     const createdAt = now();
     const post: Post = {
       id: randomUUID(),
@@ -290,7 +291,7 @@ export class Repository {
       updatedAt: createdAt,
       publishedAt: input.status === "published" ? createdAt : undefined
     };
-    this.db
+    await this.db
       .prepare(
         `INSERT INTO posts
         (id, owner_id, title, body, status, tags, word_count, source_url, cover_image_url, reading_order, seo, created_at, updated_at, published_at)
@@ -315,8 +316,8 @@ export class Repository {
     return post;
   }
 
-  updatePost(id: string, input: Partial<PostInput>): Post | undefined {
-    const existing = this.getPost(id);
+  async updatePost(id: string, input: Partial<PostInput>): Promise<Post | undefined> {
+    const existing = await this.getPost(id);
     if (!existing) return undefined;
     const post: Post = {
       ...existing,
@@ -327,7 +328,7 @@ export class Repository {
       publishedAt:
         input.status === "published" && !existing.publishedAt ? now() : existing.publishedAt
     };
-    this.db
+    await this.db
       .prepare(
         `UPDATE posts SET title = ?, body = ?, status = ?, tags = ?, word_count = ?,
         source_url = ?, cover_image_url = ?, reading_order = ?, seo = ?, updated_at = ?, published_at = ? WHERE id = ?`
@@ -347,18 +348,19 @@ export class Repository {
         id
       );
     if (input.body !== undefined && input.body !== existing.body) {
-      this.db.prepare("DELETE FROM post_embeddings WHERE post_id = ?").run(id);
+      await this.db.prepare("DELETE FROM post_embeddings WHERE post_id = ?").run(id);
     }
     return post;
   }
 
-  deletePost(id: string) {
-    this.db.prepare("DELETE FROM post_embeddings WHERE post_id = ?").run(id);
-    return this.db.prepare("DELETE FROM posts WHERE id = ? AND owner_id = ?").run(id, this.owner).changes > 0;
+  async deletePost(id: string) {
+    await this.db.prepare("DELETE FROM post_embeddings WHERE post_id = ?").run(id);
+    const rows = await this.db.prepare("DELETE FROM posts WHERE id = ? AND owner_id = ? RETURNING id").all(id, this.owner);
+    return rows.length > 0;
   }
 
-  getPostEmbedding(postId: string, model: string): number[] | undefined {
-    const row = this.db
+  async getPostEmbedding(postId: string, model: string): Promise<number[] | undefined> {
+    const row = await this.db
       .prepare("SELECT vector FROM post_embeddings WHERE post_id = ? AND model = ?")
       .get(postId, model);
     if (!row?.vector) return undefined;
@@ -366,17 +368,17 @@ export class Repository {
     return vector.length > 0 ? vector : undefined;
   }
 
-  savePostEmbedding(postId: string, model: string, vector: number[]) {
-    this.db
-      .prepare("INSERT OR REPLACE INTO post_embeddings (post_id, model, vector, created_at) VALUES (?, ?, ?, ?)")
+  async savePostEmbedding(postId: string, model: string, vector: number[]) {
+    await this.db
+      .prepare("INSERT INTO post_embeddings (post_id, model, vector, created_at) VALUES (?, ?, ?, ?) ON CONFLICT (post_id, model) DO UPDATE SET vector=EXCLUDED.vector, created_at=EXCLUDED.created_at")
       .run(postId, model, json(vector), now());
   }
 
-  saveIdeas(ideas: Omit<TopicIdea, "id" | "createdAt">[]) {
+  async saveIdeas(ideas: Omit<TopicIdea, "id" | "createdAt">[]) {
     const createdAt = now();
-    return ideas.map((idea) => {
+    return await Promise.all(ideas.map(async (idea) => {
       const saved: TopicIdea = { ...idea, id: randomUUID(), createdAt };
-      this.db
+      await this.db
         .prepare(
           `INSERT INTO topic_ideas (id, owner_id, type, title, angle, rationale, source_post_id, series, series_order, created_at)
           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
@@ -394,17 +396,17 @@ export class Repository {
           saved.createdAt
         );
       return saved;
-    });
+    }));
   }
 
-  listSchedules(): ScheduleEntry[] {
-    return this.db
+  async listSchedules(): Promise<ScheduleEntry[]> {
+    return (await this.db
       .prepare("SELECT * FROM schedule_entries WHERE owner_id = ? ORDER BY target_date ASC")
-      .all(this.owner)
+      .all(this.owner))
       .map(rowToSchedule);
   }
 
-  createSchedule(input: ScheduleInput): ScheduleEntry {
+  async createSchedule(input: ScheduleInput): Promise<ScheduleEntry> {
     const createdAt = now();
     const entry: ScheduleEntry = {
       ...input,
@@ -412,7 +414,7 @@ export class Repository {
       createdAt,
       updatedAt: createdAt
     };
-    this.db
+    await this.db
       .prepare(
         `INSERT INTO schedule_entries
         (id, owner_id, post_id, brief_id, title, target_date, status, reminder_channel, reminder_sent, checklist, created_at, updated_at)
@@ -435,11 +437,11 @@ export class Repository {
     return entry;
   }
 
-  updateSchedule(id: string, input: Partial<ScheduleInput>): ScheduleEntry | undefined {
-    const existing = this.listSchedules().find((entry) => entry.id === id);
+  async updateSchedule(id: string, input: Partial<ScheduleInput>): Promise<ScheduleEntry | undefined> {
+    const existing = (await this.listSchedules()).find((entry) => entry.id === id);
     if (!existing) return undefined;
     const entry: ScheduleEntry = { ...existing, ...input, updatedAt: now() };
-    this.db
+    await this.db
       .prepare(
         `UPDATE schedule_entries SET post_id = ?, brief_id = ?, title = ?, target_date = ?,
         status = ?, reminder_channel = ?, reminder_sent = ?, checklist = ?, updated_at = ? WHERE id = ?`
@@ -459,13 +461,14 @@ export class Repository {
     return entry;
   }
 
-  deleteSchedule(id: string) {
-    return this.db.prepare("DELETE FROM schedule_entries WHERE id = ? AND owner_id = ?").run(id, this.owner).changes > 0;
+  async deleteSchedule(id: string) {
+    const rows = await this.db.prepare("DELETE FROM schedule_entries WHERE id = ? AND owner_id = ? RETURNING id").all(id, this.owner);
+    return rows.length > 0;
   }
 
-  saveSeo(input: Omit<SeoPackage, "id" | "createdAt">): SeoPackage {
+  async saveSeo(input: Omit<SeoPackage, "id" | "createdAt">): Promise<SeoPackage> {
     const item: SeoPackage = { ...input, id: randomUUID(), createdAt: now() };
-    this.db
+    await this.db
       .prepare(
         `INSERT INTO seo_packages (id, owner_id, post_id, meta_title, meta_description, slug, tags, social_blurb, created_at)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
@@ -484,12 +487,23 @@ export class Repository {
     return item;
   }
 
-  saveImage(input: Omit<ImageAsset, "id" | "createdAt">): ImageAsset {
-    // Persist large raster data URLs to disk; keep small SVG placeholders inline.
-    const item: ImageAsset = { ...input, url: persistImage(input.url), id: randomUUID(), createdAt: now() };
-    this.db
+  async saveImage(input: Omit<ImageAsset, "id" | "createdAt">): Promise<ImageAsset> {
+    const id = randomUUID();
+    // Store inline base64 data URLs as bytes in Postgres; otherwise keep the url as-is.
+    const match = input.url.match(/^data:image\/(png|jpeg|jpg|webp);base64,(.+)$/);
+    let data: Buffer | null = null;
+    let mime: string | null = null;
+    let url = input.url;
+    if (match) {
+      const ext = match[1];
+      data = Buffer.from(match[2], "base64");
+      mime = ext === "jpg" ? "image/jpeg" : `image/${ext}`;
+      url = "/api/images/" + id;
+    }
+    const item: ImageAsset = { ...input, url, id, createdAt: now() };
+    await this.db
       .prepare(
-        "INSERT INTO image_assets (id, owner_id, post_id, prompt, url, provider, role, style, caption, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+        "INSERT INTO image_assets (id, owner_id, post_id, prompt, url, provider, role, style, caption, data, mime, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
       )
       .run(
         item.id,
@@ -501,15 +515,23 @@ export class Repository {
         item.role ?? null,
         item.style ?? null,
         item.caption ?? null,
+        data,
+        mime,
         item.createdAt
       );
     return item;
   }
 
-  listImagesForPost(postId: string): ImageAsset[] {
-    return this.db
-      .prepare("SELECT * FROM image_assets WHERE post_id = ? AND owner_id = ? ORDER BY datetime(created_at) ASC")
-      .all(postId, this.owner)
+  async getImageBlob(id: string): Promise<{ data: Buffer; mime: string } | undefined> {
+    const row = await this.db.prepare("SELECT data, mime FROM image_assets WHERE id = ?").get(id);
+    if (row?.data) return { data: Buffer.from(row.data), mime: String(row.mime ?? "image/png") };
+    return undefined;
+  }
+
+  async listImagesForPost(postId: string): Promise<ImageAsset[]> {
+    return (await this.db
+      .prepare("SELECT * FROM image_assets WHERE post_id = ? AND owner_id = ? ORDER BY created_at ASC")
+      .all(postId, this.owner))
       .map((row) => ({
         id: String(row.id),
         postId: row.post_id ? String(row.post_id) : undefined,
@@ -525,28 +547,28 @@ export class Repository {
 
   // ---- Per-Show visual identity (art style + palette + motifs) ----
 
-  getVisualIdentity(showId: string): VisualIdentity {
-    const row = this.db.prepare("SELECT value FROM kv WHERE key = ?").get(`visualIdentity:${showId}`);
+  async getVisualIdentity(showId: string): Promise<VisualIdentity> {
+    const row = await this.db.prepare("SELECT value FROM kv WHERE key = ?").get(`visualIdentity:${showId}`);
     return parse<VisualIdentity>(row?.value ? String(row.value) : "", { artStyle: "", palette: "", motifs: "" });
   }
 
-  setVisualIdentity(showId: string, identity: VisualIdentity): VisualIdentity {
-    this.db.prepare("INSERT OR REPLACE INTO kv (key, value) VALUES (?, ?)").run(`visualIdentity:${showId}`, json(identity));
+  async setVisualIdentity(showId: string, identity: VisualIdentity): Promise<VisualIdentity> {
+    await this.db.prepare("INSERT INTO kv (key, value) VALUES (?, ?) ON CONFLICT (key) DO UPDATE SET value=EXCLUDED.value").run(`visualIdentity:${showId}`, json(identity));
     return identity;
   }
 
   // A one-line identity string for image prompts, from the active show.
-  activeVisualIdentityPrompt(): string {
-    const show = this.getActiveShow();
-    const v = this.getVisualIdentity(show.id);
+  async activeVisualIdentityPrompt(): Promise<string> {
+    const show = await this.getActiveShow();
+    const v = await this.getVisualIdentity(show.id);
     const parts = [v.artStyle && `art style: ${v.artStyle}`, v.palette && `palette: ${v.palette}`, v.motifs && `motifs: ${v.motifs}`].filter(Boolean);
     return parts.join("; ");
   }
 
-  saveRepurpose(input: { postId?: string; tweetThread: string[]; linkedinPost: string; newsletterTeaser: string }) {
+  async saveRepurpose(input: { postId?: string; tweetThread: string[]; linkedinPost: string; newsletterTeaser: string }) {
     const id = randomUUID();
     const createdAt = now();
-    this.db
+    await this.db
       .prepare(
         `INSERT INTO repurpose_packages (id, owner_id, post_id, tweet_thread, linkedin_post, newsletter_teaser, created_at)
         VALUES (?, ?, ?, ?, ?, ?, ?)`
@@ -556,17 +578,17 @@ export class Repository {
   }
 
   // Assign a chronological "start here" reading order (oldest = 1) across all posts.
-  suggestReadingOrder(): Post[] {
-    const ordered = [...this.listPosts()].sort((a, b) => a.createdAt.localeCompare(b.createdAt));
-    ordered.forEach((post, index) => {
-      this.db.prepare("UPDATE posts SET reading_order = ?, updated_at = ? WHERE id = ?").run(index + 1, now(), post.id);
-    });
-    return this.listPosts();
+  async suggestReadingOrder(): Promise<Post[]> {
+    const ordered = [...(await this.listPosts())].sort((a, b) => a.createdAt.localeCompare(b.createdAt));
+    for (const [index, post] of ordered.entries()) {
+      await this.db.prepare("UPDATE posts SET reading_order = ?, updated_at = ? WHERE id = ?").run(index + 1, now(), post.id);
+    }
+    return await this.listPosts();
   }
 
-  createImportBatch(input: Omit<ImportBatch, "id" | "createdAt">): ImportBatch {
+  async createImportBatch(input: Omit<ImportBatch, "id" | "createdAt">): Promise<ImportBatch> {
     const item: ImportBatch = { ...input, id: randomUUID(), createdAt: now() };
-    this.db
+    await this.db
       .prepare(
         `INSERT INTO import_batches (id, source, posts_imported, prompts_imported, references_imported, created_at)
         VALUES (?, ?, ?, ?, ?, ?)`
@@ -582,8 +604,8 @@ export class Repository {
     return item;
   }
 
-  upsertCorpusSource(input: Omit<CorpusSource, "id" | "importedAt">): CorpusSource {
-    const existing = this.db.prepare("SELECT * FROM corpus_sources WHERE path = ? AND owner_id = ?").get(input.path, this.owner);
+  async upsertCorpusSource(input: Omit<CorpusSource, "id" | "importedAt">): Promise<CorpusSource> {
+    const existing = await this.db.prepare("SELECT * FROM corpus_sources WHERE path = ? AND owner_id = ?").get(input.path, this.owner);
     const importedAt = now();
     if (existing) {
       const source: CorpusSource = {
@@ -594,39 +616,39 @@ export class Repository {
         segmentCount: input.segmentCount,
         importedAt
       };
-      this.db
+      await this.db
         .prepare("UPDATE corpus_sources SET name = ?, checksum = ?, imported_at = ?, segment_count = ? WHERE id = ?")
         .run(source.name, source.checksum, source.importedAt, source.segmentCount, source.id);
       return source;
     }
     const source: CorpusSource = { ...input, id: randomUUID(), importedAt };
-    this.db
+    await this.db
       .prepare("INSERT INTO corpus_sources (id, owner_id, path, name, checksum, imported_at, segment_count) VALUES (?, ?, ?, ?, ?, ?, ?)")
       .run(source.id, this.owner, source.path, source.name, source.checksum, source.importedAt, source.segmentCount);
     return source;
   }
 
-  listCorpusSources(): CorpusSource[] {
-    return this.db
-      .prepare("SELECT * FROM corpus_sources WHERE owner_id = ? ORDER BY datetime(imported_at) DESC")
-      .all(this.owner)
+  async listCorpusSources(): Promise<CorpusSource[]> {
+    return (await this.db
+      .prepare("SELECT * FROM corpus_sources WHERE owner_id = ? ORDER BY imported_at DESC")
+      .all(this.owner))
       .map(rowToCorpusSource);
   }
 
-  listCorpusSegments(): CorpusSegment[] {
-    return this.db
+  async listCorpusSegments(): Promise<CorpusSegment[]> {
+    return (await this.db
       .prepare("SELECT * FROM corpus_segments WHERE owner_id = ? ORDER BY source_path ASC, line_start ASC")
-      .all(this.owner)
+      .all(this.owner))
       .map(rowToCorpusSegment);
   }
 
-  getCorpusSegment(id: string): CorpusSegment | undefined {
-    const row = this.db.prepare("SELECT * FROM corpus_segments WHERE id = ? AND owner_id = ?").get(id, this.owner);
+  async getCorpusSegment(id: string): Promise<CorpusSegment | undefined> {
+    const row = await this.db.prepare("SELECT * FROM corpus_segments WHERE id = ? AND owner_id = ?").get(id, this.owner);
     return row ? rowToCorpusSegment(row) : undefined;
   }
 
-  upsertCorpusSegment(sourceId: string, input: CorpusSegmentPreview): CorpusSegment {
-    const existing = this.db
+  async upsertCorpusSegment(sourceId: string, input: CorpusSegmentPreview): Promise<CorpusSegment> {
+    const existing = await this.db
       .prepare("SELECT * FROM corpus_segments WHERE source_path = ? AND line_start = ? AND line_end = ? AND owner_id = ?")
       .get(input.sourcePath, input.lineStart, input.lineEnd, this.owner);
     const timestamp = now();
@@ -638,7 +660,7 @@ export class Repository {
         createdAt: String(existing.created_at),
         updatedAt: timestamp
       };
-      this.db
+      await this.db
         .prepare(
           `UPDATE corpus_segments SET source_id = ?, title = ?, body = ?, type = ?, memory_role = ?, tags = ?,
           confidence = ?, embedding_status = ?, embedding_provider = ?, judge_readiness = ?, updated_at = ? WHERE id = ?`
@@ -666,7 +688,7 @@ export class Repository {
       createdAt: timestamp,
       updatedAt: timestamp
     };
-    this.db
+    await this.db
       .prepare(
         `INSERT INTO corpus_segments
         (id, owner_id, source_id, source_path, title, body, type, memory_role, tags, line_start, line_end,
@@ -695,8 +717,8 @@ export class Repository {
     return segment;
   }
 
-  updateCorpusClassification(id: string, input: CorpusClassificationInput): CorpusSegment | undefined {
-    const existing = this.getCorpusSegment(id);
+  async updateCorpusClassification(id: string, input: CorpusClassificationInput): Promise<CorpusSegment | undefined> {
+    const existing = await this.getCorpusSegment(id);
     if (!existing) return undefined;
     const segment: CorpusSegment = {
       ...existing,
@@ -706,22 +728,22 @@ export class Repository {
       confidence: input.confidence ?? existing.confidence,
       updatedAt: now()
     };
-    this.db
+    await this.db
       .prepare("UPDATE corpus_segments SET type = ?, memory_role = ?, tags = ?, confidence = ?, updated_at = ? WHERE id = ?")
       .run(segment.type, segment.memoryRole, json(segment.tags), segment.confidence, segment.updatedAt, id);
     return segment;
   }
 
-  listBriefSeeds(): BriefSeed[] {
-    return this.db
-      .prepare("SELECT * FROM brief_seeds WHERE owner_id = ? ORDER BY datetime(created_at) DESC")
-      .all(this.owner)
+  async listBriefSeeds(): Promise<BriefSeed[]> {
+    return (await this.db
+      .prepare("SELECT * FROM brief_seeds WHERE owner_id = ? ORDER BY created_at DESC")
+      .all(this.owner))
       .map(rowToBriefSeed);
   }
 
-  upsertBriefSeed(input: BriefSeedPreview, corpusSegmentId?: string): BriefSeed {
+  async upsertBriefSeed(input: BriefSeedPreview, corpusSegmentId?: string): Promise<BriefSeed> {
     const existing = corpusSegmentId
-      ? this.db.prepare("SELECT * FROM brief_seeds WHERE corpus_segment_id = ?").get(corpusSegmentId)
+      ? await this.db.prepare("SELECT * FROM brief_seeds WHERE corpus_segment_id = ?").get(corpusSegmentId)
       : undefined;
     const timestamp = now();
     if (existing) {
@@ -732,7 +754,7 @@ export class Repository {
         createdAt: String(existing.created_at),
         updatedAt: timestamp
       };
-      this.db
+      await this.db
         .prepare(
           `UPDATE brief_seeds SET title = ?, seed = ?, topic = ?, tension = ?, raw_notes = ?, tags = ?,
           source_line_range = ?, updated_at = ? WHERE id = ?`
@@ -757,7 +779,7 @@ export class Repository {
       createdAt: timestamp,
       updatedAt: timestamp
     };
-    this.db
+    await this.db
       .prepare(
         `INSERT INTO brief_seeds
         (id, owner_id, corpus_segment_id, title, seed, topic, tension, raw_notes, tags, source_line_range, created_at, updated_at)
@@ -780,8 +802,8 @@ export class Repository {
     return seed;
   }
 
-  briefFromSeed(id: string): BriefInput | undefined {
-    const seed = this.listBriefSeeds().find((item) => item.id === id);
+  async briefFromSeed(id: string): Promise<BriefInput | undefined> {
+    const seed = (await this.listBriefSeeds()).find((item) => item.id === id);
     if (!seed) return undefined;
     return {
       topic: seed.topic || seed.title,
@@ -798,15 +820,15 @@ export class Repository {
     };
   }
 
-  listWorkflowRecipes(): WorkflowRecipe[] {
-    return this.db
+  async listWorkflowRecipes(): Promise<WorkflowRecipe[]> {
+    return (await this.db
       .prepare("SELECT * FROM workflow_recipes ORDER BY name ASC")
-      .all()
+      .all())
       .map(rowToWorkflowRecipe);
   }
 
-  upsertWorkflowRecipe(input: WorkflowRecipePreview): WorkflowRecipe {
-    const existing = this.db.prepare("SELECT * FROM workflow_recipes WHERE name = ?").get(input.name);
+  async upsertWorkflowRecipe(input: WorkflowRecipePreview): Promise<WorkflowRecipe> {
+    const existing = await this.db.prepare("SELECT * FROM workflow_recipes WHERE name = ?").get(input.name);
     const timestamp = now();
     if (existing) {
       const recipe: WorkflowRecipe = {
@@ -815,13 +837,13 @@ export class Repository {
         createdAt: String(existing.created_at),
         updatedAt: timestamp
       };
-      this.db
+      await this.db
         .prepare("UPDATE workflow_recipes SET description = ?, stages = ?, toggles = ?, judge_readiness = ?, updated_at = ? WHERE id = ?")
         .run(recipe.description, json(recipe.stages), json(recipe.toggles), json(recipe.judgeReadiness), recipe.updatedAt, recipe.id);
       return recipe;
     }
     const recipe: WorkflowRecipe = { ...input, id: randomUUID(), createdAt: timestamp, updatedAt: timestamp };
-    this.db
+    await this.db
       .prepare(
         "INSERT INTO workflow_recipes (id, name, description, stages, toggles, judge_readiness, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)"
       )
@@ -838,8 +860,8 @@ export class Repository {
     return recipe;
   }
 
-  updateWorkflowRecipe(id: string, input: WorkflowRecipeInput): WorkflowRecipe | undefined {
-    const existing = this.listWorkflowRecipes().find((recipe) => recipe.id === id);
+  async updateWorkflowRecipe(id: string, input: WorkflowRecipeInput): Promise<WorkflowRecipe | undefined> {
+    const existing = (await this.listWorkflowRecipes()).find((recipe) => recipe.id === id);
     if (!existing) return undefined;
     const recipe: WorkflowRecipe = {
       ...existing,
@@ -850,7 +872,7 @@ export class Repository {
       judgeReadiness: input.judgeReadiness ?? existing.judgeReadiness,
       updatedAt: now()
     };
-    this.db
+    await this.db
       .prepare("UPDATE workflow_recipes SET name = ?, description = ?, stages = ?, toggles = ?, judge_readiness = ?, updated_at = ? WHERE id = ?")
       .run(
         recipe.name,
@@ -864,81 +886,81 @@ export class Repository {
     return recipe;
   }
 
-  listPromptTemplates(): PromptTemplate[] {
-    const templates = this.db
+  async listPromptTemplates(): Promise<PromptTemplate[]> {
+    const templates = (await this.db
       .prepare("SELECT * FROM prompt_templates ORDER BY stage ASC")
-      .all()
+      .all())
       .map(rowToPromptTemplateBase);
-    return templates.map((template) => ({
+    return await Promise.all(templates.map(async (template) => ({
       ...template,
-      versions: this.listPromptVersions(template.id)
-    }));
+      versions: await this.listPromptVersions(template.id)
+    })));
   }
 
-  getPromptTemplate(id: string): PromptTemplate | undefined {
-    const row = this.db.prepare("SELECT * FROM prompt_templates WHERE id = ?").get(id);
+  async getPromptTemplate(id: string): Promise<PromptTemplate | undefined> {
+    const row = await this.db.prepare("SELECT * FROM prompt_templates WHERE id = ?").get(id);
     if (!row) return undefined;
     const template = rowToPromptTemplateBase(row);
-    return { ...template, versions: this.listPromptVersions(template.id) };
+    return { ...template, versions: await this.listPromptVersions(template.id) };
   }
 
-  getPromptByStage(stage: PromptStage): PromptTemplate | undefined {
-    const row = this.db.prepare("SELECT * FROM prompt_templates WHERE stage = ?").get(stage);
+  async getPromptByStage(stage: PromptStage): Promise<PromptTemplate | undefined> {
+    const row = await this.db.prepare("SELECT * FROM prompt_templates WHERE stage = ?").get(stage);
     if (!row) return undefined;
     const template = rowToPromptTemplateBase(row);
-    return { ...template, versions: this.listPromptVersions(template.id) };
+    return { ...template, versions: await this.listPromptVersions(template.id) };
   }
 
-  getActivePromptVersion(stage: PromptStage): PromptVersion | undefined {
-    const template = this.getPromptByStage(stage);
+  async getActivePromptVersion(stage: PromptStage): Promise<PromptVersion | undefined> {
+    const template = await this.getPromptByStage(stage);
     if (!template) return undefined;
     return template.versions.find((version) => version.id === template.activeVersionId);
   }
 
-  createPromptTemplate(input: PromptTemplateInput): PromptTemplate {
-    const existing = this.getPromptByStage(input.stage);
+  async createPromptTemplate(input: PromptTemplateInput): Promise<PromptTemplate> {
+    const existing = await this.getPromptByStage(input.stage);
     if (existing) {
       const duplicate = existing.versions.find((version) => version.body.trim() === input.body.trim());
       if (duplicate) {
-        this.updatePromptTemplate(existing.id, {
+        await this.updatePromptTemplate(existing.id, {
           name: input.name,
           description: input.description,
           activeVersionId: duplicate.id
         });
-        return this.getPromptTemplate(existing.id)!;
+        return (await this.getPromptTemplate(existing.id))!;
       }
-      const version = this.addPromptVersion(existing.id, { body: input.body, notes: input.notes });
-      this.updatePromptTemplate(existing.id, {
+      const version = await this.addPromptVersion(existing.id, { body: input.body, notes: input.notes });
+      await this.updatePromptTemplate(existing.id, {
         name: input.name,
         description: input.description,
         activeVersionId: version.id
       });
-      return this.getPromptTemplate(existing.id)!;
+      return (await this.getPromptTemplate(existing.id))!;
     }
 
     const createdAt = now();
     const templateId = randomUUID();
     const versionId = randomUUID();
-    this.db
+    await this.db
       .prepare(
         `INSERT INTO prompt_templates (id, stage, name, description, active_version_id, created_at, updated_at)
         VALUES (?, ?, ?, ?, ?, ?, ?)`
       )
       .run(templateId, input.stage, input.name, input.description, versionId, createdAt, createdAt);
-    this.db
+    await this.db
       .prepare(
         `INSERT INTO prompt_versions (id, template_id, version, body, notes, created_at)
         VALUES (?, ?, ?, ?, ?, ?)`
       )
       .run(versionId, templateId, 1, input.body, input.notes, createdAt);
-    return this.getPromptTemplate(templateId)!;
+    return (await this.getPromptTemplate(templateId))!;
   }
 
-  updatePromptTemplate(
+  async updatePromptTemplate(
     id: string,
     input: Partial<Pick<PromptTemplate, "name" | "description" | "activeVersionId">>
-  ): PromptTemplate | undefined {
-    const existing = this.getPromptTemplate(id);
+  ): Promise<PromptTemplate | undefined> {
+    const existing = await this.getPromptTemplate(id);
     if (!existing) return undefined;
     const next = {
       name: input.name ?? existing.name,
@@ -946,14 +968,14 @@ export class Repository {
       activeVersionId: input.activeVersionId ?? existing.activeVersionId,
       updatedAt: now()
     };
-    this.db
+    await this.db
       .prepare("UPDATE prompt_templates SET name = ?, description = ?, active_version_id = ?, updated_at = ? WHERE id = ?")
       .run(next.name, next.description, next.activeVersionId, next.updatedAt, id);
-    return this.getPromptTemplate(id);
+    return await this.getPromptTemplate(id);
   }
 
-  addPromptVersion(templateId: string, input: PromptVersionInput): PromptVersion {
-    const versions = this.listPromptVersions(templateId);
+  async addPromptVersion(templateId: string, input: PromptVersionInput): Promise<PromptVersion> {
+    const versions = await this.listPromptVersions(templateId);
     const versionNumber = versions.reduce((max, version) => Math.max(max, version.version), 0) + 1;
     const version: PromptVersion = {
       id: randomUUID(),
@@ -963,25 +985,25 @@ export class Repository {
       notes: input.notes,
       createdAt: now()
     };
-    this.db
+    await this.db
       .prepare(
         `INSERT INTO prompt_versions (id, template_id, version, body, notes, created_at)
         VALUES (?, ?, ?, ?, ?, ?)`
       )
       .run(version.id, version.templateId, version.version, version.body, version.notes, version.createdAt);
-    this.updatePromptTemplate(templateId, { activeVersionId: version.id });
+    await this.updatePromptTemplate(templateId, { activeVersionId: version.id });
     return version;
   }
 
-  activatePromptVersion(templateId: string, versionId: string): PromptTemplate | undefined {
-    const version = this.listPromptVersions(templateId).find((item) => item.id === versionId);
+  async activatePromptVersion(templateId: string, versionId: string): Promise<PromptTemplate | undefined> {
+    const version = (await this.listPromptVersions(templateId)).find((item) => item.id === versionId);
     if (!version) return undefined;
-    return this.updatePromptTemplate(templateId, { activeVersionId: versionId });
+    return await this.updatePromptTemplate(templateId, { activeVersionId: versionId });
   }
 
-  saveVoiceDistillation(input: Omit<VoiceDistillation, "id" | "createdAt">): VoiceDistillation {
+  async saveVoiceDistillation(input: Omit<VoiceDistillation, "id" | "createdAt">): Promise<VoiceDistillation> {
     const item: VoiceDistillation = { ...input, id: randomUUID(), createdAt: now() };
-    this.db
+    await this.db
       .prepare(
         `INSERT INTO voice_distillations
         (id, owner_id, source_post_ids, traits, structures, rhythm, metaphors, theological_lenses, weak_patterns, exemplars, created_at)
@@ -1003,9 +1025,9 @@ export class Repository {
     return item;
   }
 
-  getLatestVoiceDistillation(): VoiceDistillation | undefined {
-    const row = this.db
-      .prepare("SELECT * FROM voice_distillations WHERE owner_id = ? ORDER BY datetime(created_at) DESC LIMIT 1")
+  async getLatestVoiceDistillation(): Promise<VoiceDistillation | undefined> {
+    const row = await this.db
+      .prepare("SELECT * FROM voice_distillations WHERE owner_id = ? ORDER BY created_at DESC LIMIT 1")
       .get(this.owner);
     if (!row) return undefined;
     return {
@@ -1022,9 +1044,9 @@ export class Repository {
     };
   }
 
-  saveQualityReport(input: Omit<QualityReport, "id" | "createdAt">): QualityReport {
+  async saveQualityReport(input: Omit<QualityReport, "id" | "createdAt">): Promise<QualityReport> {
     const item: QualityReport = { ...input, id: randomUUID(), createdAt: now() };
-    this.db
+    await this.db
       .prepare(
         `INSERT INTO quality_reports
         (id, generation_id, text_hash, vocabulary_violations, structural_violations, scores, verdict, summary, created_at)
@@ -1041,13 +1063,13 @@ export class Repository {
         item.summary,
         item.createdAt
       );
-    if (item.generationId) this.updateGenerationQualityReport(item.generationId, item.id);
+    if (item.generationId) await this.updateGenerationQualityReport(item.generationId, item.id);
     return item;
   }
 
-  saveOutputRevision(input: Omit<OutputRevision, "id" | "createdAt">): OutputRevision {
+  async saveOutputRevision(input: Omit<OutputRevision, "id" | "createdAt">): Promise<OutputRevision> {
     const item: OutputRevision = { ...input, id: randomUUID(), createdAt: now() };
-    this.db
+    await this.db
       .prepare(
         `INSERT INTO output_revisions (id, generation_id, report_id, original_text, revised_text, created_at)
         VALUES (?, ?, ?, ?, ?, ?)`
@@ -1056,9 +1078,9 @@ export class Repository {
     return item;
   }
 
-  createGenerationRecord(input: Omit<GenerationRecord, "id" | "createdAt">): GenerationRecord {
+  async createGenerationRecord(input: Omit<GenerationRecord, "id" | "createdAt">): Promise<GenerationRecord> {
     const item: GenerationRecord = { ...input, id: randomUUID(), createdAt: now() };
-    this.db
+    await this.db
       .prepare(
         `INSERT INTO generation_records
         (id, owner_id, stage, content, provider, model, prompt_version_id, brief_json, retrieved_post_ids, corpus_segment_ids, citation_flags, quality_report_id, prompt_tokens, completion_tokens, total_tokens, cost, created_at)
@@ -1086,56 +1108,56 @@ export class Repository {
     return item;
   }
 
-  listGenerationRecords(): GenerationRecord[] {
-    return this.db
-      .prepare("SELECT * FROM generation_records WHERE owner_id = ? ORDER BY datetime(created_at) DESC LIMIT 100")
-      .all(this.owner)
+  async listGenerationRecords(): Promise<GenerationRecord[]> {
+    return (await this.db
+      .prepare("SELECT * FROM generation_records WHERE owner_id = ? ORDER BY created_at DESC LIMIT 100")
+      .all(this.owner))
       .map(rowToGenerationRecord);
   }
 
-  getGenerationRecord(id: string): GenerationRecord | undefined {
-    const row = this.db.prepare("SELECT * FROM generation_records WHERE id = ? AND owner_id = ?").get(id, this.owner);
+  async getGenerationRecord(id: string): Promise<GenerationRecord | undefined> {
+    const row = await this.db.prepare("SELECT * FROM generation_records WHERE id = ? AND owner_id = ?").get(id, this.owner);
     return row ? rowToGenerationRecord(row) : undefined;
   }
 
-  updateGenerationQualityReport(id: string, qualityReportId: string) {
-    this.db
+  async updateGenerationQualityReport(id: string, qualityReportId: string) {
+    await this.db
       .prepare("UPDATE generation_records SET quality_report_id = ? WHERE id = ?")
       .run(qualityReportId, id);
   }
 
-  private listPromptVersions(templateId: string): PromptVersion[] {
-    return this.db
+  private async listPromptVersions(templateId: string): Promise<PromptVersion[]> {
+    return (await this.db
       .prepare("SELECT * FROM prompt_versions WHERE template_id = ? ORDER BY version DESC")
-      .all(templateId)
+      .all(templateId))
       .map(rowToPromptVersion);
   }
 
   // Seed any default templates whose stage isn't present yet (idempotent). This
   // also backfills stages added after a DB was first created (e.g. refine),
   // while leaving user-edited templates untouched.
-  private seedDefaultPrompts() {
-    const existing = new Set(this.listPromptTemplates().map((template) => template.stage));
+  private async seedDefaultPrompts() {
+    const existing = new Set((await this.listPromptTemplates()).map((template) => template.stage));
     for (const template of [...DEFAULT_PROMPT_TEMPLATES, ...GRID_PROMPT_TEMPLATES]) {
-      if (!existing.has(template.stage)) this.createPromptTemplate(template);
+      if (!existing.has(template.stage)) await this.createPromptTemplate(template);
     }
   }
 
   // Seed default recipes missing by name (idempotent); preserves user edits.
-  private seedDefaultWorkflows() {
-    const existing = new Set(this.listWorkflowRecipes().map((recipe) => recipe.name));
+  private async seedDefaultWorkflows() {
+    const existing = new Set((await this.listWorkflowRecipes()).map((recipe) => recipe.name));
     for (const recipe of [...DEFAULT_WORKFLOW_RECIPES, GRID_RECIPE]) {
-      if (!existing.has(recipe.name)) this.upsertWorkflowRecipe(recipe);
+      if (!existing.has(recipe.name)) await this.upsertWorkflowRecipe(recipe);
     }
   }
 
   // ---- The Grid: show bootstrap + continuity memory (per owner) ----
 
-  ensureGridShow(): Show {
-    const existing = this.listShows().find((show) => show.kind === "grid");
+  async ensureGridShow(): Promise<Show> {
+    const existing = (await this.listShows()).find((show) => show.kind === "grid");
     if (existing) return existing;
-    const voice = this.createVoice("The Grid", GRID_VOICE_PROFILE);
-    return this.createShow({
+    const voice = await this.createVoice("The Grid", GRID_VOICE_PROFILE);
+    return await this.createShow({
       name: "The Grid",
       kind: "grid",
       description: "Signal-to-fiction: real market/tech signals become near-future Afrofuturist episodes.",
@@ -1143,37 +1165,37 @@ export class Repository {
     });
   }
 
-  getGridBible(): string {
-    const row = this.db.prepare("SELECT value FROM kv WHERE key = ?").get(`gridBible:${this.owner}`);
+  async getGridBible(): Promise<string> {
+    const row = await this.db.prepare("SELECT value FROM kv WHERE key = ?").get(`gridBible:${this.owner}`);
     return row?.value ? String(row.value) : "";
   }
 
-  setGridBible(text: string): void {
-    this.db.prepare("INSERT OR REPLACE INTO kv (key, value) VALUES (?, ?)").run(`gridBible:${this.owner}`, text);
+  async setGridBible(text: string): Promise<void> {
+    await this.db.prepare("INSERT INTO kv (key, value) VALUES (?, ?) ON CONFLICT (key) DO UPDATE SET value=EXCLUDED.value").run(`gridBible:${this.owner}`, text);
   }
 
-  getGridStoryLog(): string {
-    const row = this.db.prepare("SELECT value FROM kv WHERE key = ?").get(`gridStoryLog:${this.owner}`);
+  async getGridStoryLog(): Promise<string> {
+    const row = await this.db.prepare("SELECT value FROM kv WHERE key = ?").get(`gridStoryLog:${this.owner}`);
     return row?.value ? String(row.value) : "";
   }
 
-  setGridStoryLog(text: string): void {
-    this.db.prepare("INSERT OR REPLACE INTO kv (key, value) VALUES (?, ?)").run(`gridStoryLog:${this.owner}`, text);
+  async setGridStoryLog(text: string): Promise<void> {
+    await this.db.prepare("INSERT INTO kv (key, value) VALUES (?, ?) ON CONFLICT (key) DO UPDATE SET value=EXCLUDED.value").run(`gridStoryLog:${this.owner}`, text);
   }
 
-  appendGridStoryLog(entry: string): string {
-    const existing = this.getGridStoryLog() || "# THE GRID — Story Log\n";
+  async appendGridStoryLog(entry: string): Promise<string> {
+    const existing = (await this.getGridStoryLog()) || "# THE GRID — Story Log\n";
     const sep = existing.endsWith("\n\n") ? "" : existing.endsWith("\n") ? "\n" : "\n\n";
     const next = `${existing}${sep}${entry.trim()}\n`;
-    this.setGridStoryLog(next);
+    await this.setGridStoryLog(next);
     return next;
   }
 
   // ---- Experiments (swarm runs, per owner) ----
 
-  createExperiment(input: Omit<Experiment, "id" | "createdAt">): Experiment {
+  async createExperiment(input: Omit<Experiment, "id" | "createdAt">): Promise<Experiment> {
     const item: Experiment = { ...input, id: randomUUID(), createdAt: now() };
-    this.db
+    await this.db
       .prepare(
         "INSERT INTO experiments (id, owner_id, name, kind, results, winner, winner_variant, cost, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)"
       )
@@ -1191,10 +1213,10 @@ export class Repository {
     return item;
   }
 
-  listExperiments(): Experiment[] {
-    return this.db
-      .prepare("SELECT * FROM experiments WHERE owner_id = ? ORDER BY datetime(created_at) DESC LIMIT 50")
-      .all(this.owner)
+  async listExperiments(): Promise<Experiment[]> {
+    return (await this.db
+      .prepare("SELECT * FROM experiments WHERE owner_id = ? ORDER BY created_at DESC LIMIT 50")
+      .all(this.owner))
       .map((row) => ({
         id: String(row.id),
         name: String(row.name),
@@ -1209,19 +1231,19 @@ export class Repository {
 
   // ---- Territories (concept graphs, per owner) ----
 
-  createTerritory(name: string, kind: string, graph: ConceptGraph) {
+  async createTerritory(name: string, kind: string, graph: ConceptGraph) {
     const id = randomUUID();
     const createdAt = now();
-    this.db
+    await this.db
       .prepare("INSERT INTO territories (id, owner_id, name, kind, graph, created_at) VALUES (?, ?, ?, ?, ?, ?)")
       .run(id, this.owner, name, kind, json(graph), createdAt);
     return { id, name, kind, graph, nodeCount: graph.nodes.length, edgeCount: graph.edges.length, createdAt };
   }
 
-  listTerritories() {
-    return this.db
-      .prepare("SELECT id, name, kind, graph, created_at FROM territories WHERE owner_id = ? ORDER BY datetime(created_at) DESC")
-      .all(this.owner)
+  async listTerritories() {
+    return (await this.db
+      .prepare("SELECT id, name, kind, graph, created_at FROM territories WHERE owner_id = ? ORDER BY created_at DESC")
+      .all(this.owner))
       .map((row) => {
         const graph = parse<ConceptGraph>(String(row.graph), { nodes: [], edges: [] });
         return {
@@ -1235,8 +1257,8 @@ export class Repository {
       });
   }
 
-  getTerritory(id: string) {
-    const row = this.db.prepare("SELECT * FROM territories WHERE id = ? AND owner_id = ?").get(id, this.owner);
+  async getTerritory(id: string) {
+    const row = await this.db.prepare("SELECT * FROM territories WHERE id = ? AND owner_id = ?").get(id, this.owner);
     if (!row) return undefined;
     const graph = parse<ConceptGraph>(String(row.graph), { nodes: [], edges: [] });
     return {
@@ -1250,8 +1272,9 @@ export class Repository {
     };
   }
 
-  deleteTerritory(id: string): boolean {
-    return this.db.prepare("DELETE FROM territories WHERE id = ? AND owner_id = ?").run(id, this.owner).changes > 0;
+  async deleteTerritory(id: string): Promise<boolean> {
+    const rows = await this.db.prepare("DELETE FROM territories WHERE id = ? AND owner_id = ? RETURNING id").all(id, this.owner);
+    return rows.length > 0;
   }
 }
 

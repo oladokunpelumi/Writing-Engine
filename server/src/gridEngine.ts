@@ -25,13 +25,13 @@ function lenientJson<T>(text: string): T | undefined {
 
 // The Grid always writes in the Grid show's voice, regardless of which show is
 // currently active in the UI.
-function gridVoice(repo: Repository) {
-  const show = repo.ensureGridShow();
-  return (show.voiceId && repo.getVoiceById(show.voiceId)) || repo.getVoice();
+async function gridVoice(repo: Repository) {
+  const show = await repo.ensureGridShow();
+  return (show.voiceId && (await repo.getVoiceById(show.voiceId))) || (await repo.getVoice());
 }
 
 async function run(repo: Repository, stage: Parameters<Repository["getActivePromptVersion"]>[0], input: string) {
-  return runStage(stage, gridVoice(repo), input, undefined, repo.getActivePromptVersion(stage));
+  return runStage(stage, await gridVoice(repo), input, undefined, await repo.getActivePromptVersion(stage));
 }
 
 // ---- Stage 1: Signals ----
@@ -77,12 +77,12 @@ export async function runGridSynthesis(repo: Repository, signals: string) {
 }
 
 // ---- Gate 1: ReviewGate recommendation (continuity-aware) ----
-export function gridContinuity(repo: Repository): GridContinuity {
-  return continuityFrom(parseLogEntries(repo.getGridStoryLog()));
+export async function gridContinuity(repo: Repository): Promise<GridContinuity> {
+  return continuityFrom(parseLogEntries(await repo.getGridStoryLog()));
 }
 
 export async function runGridReviewGate(repo: Repository, synthesis: string) {
-  const continuity = gridContinuity(repo);
+  const continuity = await gridContinuity(repo);
   const input = `Synthesis:\n${synthesis}\n\nContinuity rules:\n${continuityPrompt(continuity)}`;
   const response = await run(repo, "reviewgate", input);
   return { response, continuity };
@@ -97,9 +97,9 @@ export interface GridStoryResult {
 }
 
 export async function runGridStory(repo: Repository, args: { reviewGate: string; signals: string }): Promise<GridStoryResult> {
-  const continuity = gridContinuity(repo);
-  const bible = repo.getGridBible();
-  const recentLog = parseLogEntries(repo.getGridStoryLog())
+  const continuity = await gridContinuity(repo);
+  const bible = await repo.getGridBible();
+  const recentLog = parseLogEntries(await repo.getGridStoryLog())
     .slice(-3)
     .map((entry) => entry.raw)
     .join("\n\n");
@@ -116,8 +116,8 @@ export async function runGridStory(repo: Repository, args: { reviewGate: string;
     .join("\n\n");
 
   let lastUsage: GenerationResponse["usage"];
-  const storyPv = repo.getActivePromptVersion("story");
-  const voice = gridVoice(repo);
+  const storyPv = await repo.getActivePromptVersion("story");
+  const voice = await gridVoice(repo);
 
   const result = await refine({
     maxRounds: 3,
@@ -146,9 +146,9 @@ async function validateStory(repo: Repository, draft: string): Promise<string[]>
 }
 
 // ---- Gate 2 → Publish: append the StoryLog entry, return a Substack package ----
-export function gridPublish(repo: Repository, story: string) {
+export async function gridPublish(repo: Repository, story: string) {
   const logEntry = extractLogEntry(story);
-  if (logEntry) repo.appendGridStoryLog(logEntry);
+  if (logEntry) await repo.appendGridStoryLog(logEntry);
   const title = story.match(/^#\s+(.+)$/m)?.[1]?.trim() || story.match(/Title:\s*(.+)$/m)?.[1]?.trim() || "Untitled episode";
   return {
     title,

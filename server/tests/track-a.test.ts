@@ -29,8 +29,8 @@ const post = (title: string, body: string, tags: string[] = []): Post => ({
 });
 
 const emptyStore: EmbeddingStore = {
-  getPostEmbedding: () => undefined,
-  savePostEmbedding: () => {}
+  getPostEmbedding: async () => undefined,
+  savePostEmbedding: async () => {}
 };
 
 let previousKey: string | undefined;

@@ -1,69 +1,84 @@
-# Deploying Gbedu Desk (Writing Engine) on Render
+# Deploying Co-Create on Railway
 
-One Docker web service serves both the API and the built client from a single URL.
-SQLite + generated images live on a **persistent disk**, so your library, drafts,
-voices, and images survive every redeploy. Access is **invite-only** (auth on).
+One Docker service serves the API + the built client from a single URL. State lives
+in a managed **PostgreSQL** database — including generated images (stored as bytes
+and served from `/api/images/:id`), so there's no volume to mount and nothing is
+lost on redeploy. Access is **invite-only**.
 
 ## Architecture
 
-- **Single service**: Express serves `/api/*` and the static client build (`client/dist`) on the same origin — no CORS, one URL. (`server/src/index.ts`)
-- **Storage**: a Render disk mounted at `/data` holds the SQLite file (`/data/gbedu-desk.sqlite`) and images (`/data/images`). Both paths are env-driven (`DATABASE_PATH`, `IMAGE_DIR`).
-- **Runtime**: Node 22 (required by the built-in `node:sqlite`). `tsx` runs the TypeScript server directly.
+- **Single service**: Express serves `/api/*` and the static client build on one origin — no CORS.
+- **Storage**: PostgreSQL via `DATABASE_URL`. Structured data *and* image bytes live there (single source of truth).
+- **Dev/test**: with no `DATABASE_URL`, the app runs on [pglite](https://pglite.dev) (in-process Postgres) — same dialect, no server, so local dev + the test suite need zero setup.
+- **Runtime**: Node 22, `tsx` runs the TypeScript server directly.
 
 ## One-time deploy
 
-1. **Push the repo to GitHub** (already done if you're reading this there).
-2. In **Render → New → Blueprint**, select this repo. Render reads `render.yaml` and provisions:
-   - a Docker web service (`writing-engine`) on the **Starter** plan,
-   - a **1 GB persistent disk** mounted at `/data`,
-   - a `JWT_SECRET` (auto-generated),
-   - a health check on `/api/health`.
-3. **Set the two secrets** when prompted (they are `sync: false`, so never committed):
-   - `OPENROUTER_API_KEY` — your OpenRouter key.
-   - `INVITE_CODE` — any phrase; you give it only to people you want to let register.
-4. Click **Apply**. First build takes a few minutes (installs deps + builds the client).
-5. Open the service URL → you'll see the **login screen**. Choose **Create account**, enter your email/password **+ the invite code**, and you're in.
+1. **Push the repo to GitHub.**
+2. In **Railway → New Project → Deploy from GitHub repo**, pick this repo. Railway reads `railway.json` and builds the `Dockerfile`.
+3. **Add a database**: in the project, **New → Database → PostgreSQL**. Railway creates it and exposes its connection string.
+4. **Wire it up**: on the app service → **Variables**, add `DATABASE_URL` and set it to a reference to the Postgres service — `${{Postgres.DATABASE_URL}}` (Railway resolves this to the internal connection string). Internal networking doesn't need SSL; if you use a public/proxied URL instead, also set `DATABASE_SSL=require`.
+5. **Set the rest of the variables** (app service → Variables):
+   - `AUTH_REQUIRED=true`
+   - `INVITE_CODE=<a phrase you share only with people you want to let in>`
+   - `JWT_SECRET=<a long random string>`
+   - `OPENROUTER_API_KEY=<your key>`
+   - model routing + flags (optional; sane defaults exist): `MODEL_DRAFT`, `MODEL_SHARPEN`, `MODEL_IMAGE`, `ENABLE_PROMPT_CACHE=true`, `MAX_OUTPUT_TOKENS=4000`, …
+6. Railway builds and boots; the app runs `migrate()` on first connect (creates all tables). Open the service URL → **login screen** → **Create account** with your email/password **+ the invite code**.
 
-> **Cost note:** persistent disks require a paid instance (Starter ≈ $7/mo). The free tier has an ephemeral filesystem and would wipe the database on every deploy/restart — not usable for real data. Your other running cost is OpenRouter usage (pay-as-you-go); `MAX_OUTPUT_TOKENS` caps output per call, and image generation is the priciest stage.
+> Railway injects `PORT` automatically; the server already reads it. The health check is `/api/health`.
+
+## Migrate your existing data (optional)
+
+If you have a local SQLite database to bring over, run the one-time script against
+the Railway Postgres (grab the public connection string from the Postgres service →
+Connect):
+
+```bash
+DATABASE_URL="postgresql://…railway…" \
+DATABASE_SSL=require \
+OLD_SQLITE=.data/gbedu-desk.sqlite \
+OLD_IMAGE_DIR=server/data/images \
+npx tsx scripts/migrate-sqlite-to-pg.ts
+```
+
+It copies every table and loads your on-disk images into Postgres as bytes.
+
+## Run it locally
+
+```bash
+npm install
+npm run dev          # pglite-backed, mock AI unless OPENROUTER_API_KEY is set
+```
+
+To exercise the production path locally, point it at any Postgres:
+
+```bash
+DATABASE_URL="postgresql://localhost:5432/cocreate" npm start
+# open http://localhost:4187
+```
+
+With no `DATABASE_URL`, dev/start use pglite. Set `PGLITE_PATH=.data/pg` to persist
+the local pglite database to disk (otherwise it's in-memory).
 
 ## Environment variables
 
-`render.yaml` sets sensible defaults for everything except the two secrets above.
-Key ones you may want to tune in the dashboard:
-
 | Var | Purpose |
 | --- | --- |
-| `AUTH_REQUIRED=true` | Gate the app behind login. **Keep this on** for a public URL. |
-| `INVITE_CODE` | Required to register. Rotate it anytime to stop new signups. |
-| `JWT_SECRET` | Signs session tokens (auto-generated by Render). |
+| `DATABASE_URL` | Postgres connection string (Railway: `${{Postgres.DATABASE_URL}}`). Unset → pglite locally. |
+| `DATABASE_SSL` | `require` to enable TLS for the pg client (public/proxied URLs). |
+| `PGLITE_PATH` | Where pglite persists locally (dev only; unset = in-memory). |
+| `AUTH_REQUIRED=true` | Gate the app behind login. **Keep on** for a public URL. |
+| `INVITE_CODE` | Required to register. Rotate anytime to stop new signups. |
+| `JWT_SECRET` | Signs session tokens. |
 | `OPENROUTER_API_KEY` | Your key — this is the spend. |
 | `MAX_OUTPUT_TOKENS` | Caps output tokens per call (cost guardrail). |
-| `DATABASE_PATH` / `IMAGE_DIR` | Point at the `/data` disk (preset). |
 | `MODEL_*` | Per-stage model routing (any OpenRouter slug). |
 
 ## Updating
 
-`autoDeploy` is on: push to the default branch and Render rebuilds and redeploys.
-The `/data` disk (your database + images) is untouched across deploys.
+Push to the default branch → Railway rebuilds and redeploys. The Postgres database
+(your data + images) is untouched across deploys.
 
-## Run the production image locally (optional)
-
-```bash
-docker build -t writing-engine .
-docker run -p 4187:4187 \
-  -e AUTH_REQUIRED=true -e INVITE_CODE=letmein -e JWT_SECRET=dev-secret \
-  -e OPENROUTER_API_KEY=sk-or-... \
-  -v "$(pwd)/.localdata:/data" \
-  writing-engine
-# open http://localhost:4187
-```
-
-Omit `OPENROUTER_API_KEY` to run in deterministic **mock mode** (no spend) — useful
-to smoke-test the deployment shape before pointing it at real models.
-
-## Moving off SQLite later
-
-The repository layer (`server/src/repository.ts`) is isolated behind one interface,
-so a future Postgres + object-storage migration doesn't touch routes or the client.
-Until then, the persistent disk is the source of truth — **download/back it up**
-from the Render dashboard before destructive changes.
+> A Render blueprint (`render.yaml`) is also included as a secondary option — it
+> likewise expects a managed Postgres via `DATABASE_URL` (no disk).
