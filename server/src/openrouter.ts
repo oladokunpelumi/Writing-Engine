@@ -674,14 +674,22 @@ async function postChatCompletion(body: Record<string, unknown>) {
 }
 
 async function chatWithEmptyGuard(body: Record<string, unknown>): Promise<{ content: string; usage?: Usage }> {
+  const started = Date.now();
   const data = await postChatCompletion(body);
   const content = visibleContent(data);
-  if (content) return { content, usage: toUsage(data.usage) };
+  if (content) {
+    const usage = toUsage(data.usage) ?? {};
+    return { content, usage: { ...usage, latencyMs: Date.now() - started } };
+  }
 
-  const retryBody = { ...body, model: process.env.MODEL_DRAFT || modelProfiles.balanced.draft || "openrouter/auto" };
+  const fallbackModel = process.env.MODEL_DRAFT || modelProfiles.balanced.draft || "openrouter/auto";
+  const retryBody = { ...body, model: fallbackModel };
   const retryData = await postChatCompletion(retryBody);
   const retryContent = visibleContent(retryData);
-  if (retryContent) return { content: retryContent, usage: toUsage(retryData.usage) };
+  if (retryContent) {
+    const usage = toUsage(retryData.usage) ?? {};
+    return { content: retryContent, usage: { ...usage, latencyMs: Date.now() - started, fallbackModel } };
+  }
 
   throw new Error(EMPTY_VISIBLE_DRAFT_ERROR);
 }
@@ -727,6 +735,7 @@ export async function chatStream(
   onToken: (token: string) => void,
   stage?: PromptStage
 ): Promise<{ content: string; usage?: Usage }> {
+  const started = Date.now();
   const response = await fetch(`${process.env.OPENROUTER_BASE_URL ?? "https://openrouter.ai/api/v1"}/chat/completions`, {
     method: "POST",
     headers: headers(),
@@ -775,9 +784,10 @@ export async function chatStream(
     const recovered = visibleContent(retry);
     if (recovered) {
       onToken(recovered);
-      return { content: recovered, usage: toUsage(retry.usage) };
+      const retryUsage = toUsage(retry.usage) ?? {};
+      return { content: recovered, usage: { ...retryUsage, latencyMs: Date.now() - started, fallbackModel } };
     }
     throw new Error(EMPTY_VISIBLE_DRAFT_ERROR);
   }
-  return { content: full, usage };
+  return { content: full, usage: { ...(usage ?? {}), latencyMs: Date.now() - started } };
 }

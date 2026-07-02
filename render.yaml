@@ -21,8 +21,14 @@ services:
         value: "true"
       - key: JWT_SECRET
         generateValue: true
+      - key: ADMIN_TOKEN
+        sync: false
       - key: INVITE_CODE
         sync: false
+      - key: DEFAULT_DAILY_COST_LIMIT_USD
+        value: "2"
+      - key: DEFAULT_MONTHLY_COST_LIMIT_USD
+        value: "20"
       # --- OpenRouter (the only real secret + spend) ---
       - key: OPENROUTER_API_KEY
         sync: false

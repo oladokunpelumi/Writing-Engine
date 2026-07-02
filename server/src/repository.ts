@@ -1,5 +1,8 @@
 import { randomUUID } from "node:crypto";
 import type {
+  ActivationEvent,
+  ActivationEventInput,
+  AdminReadiness,
   BriefInput,
   BriefSeed,
   BriefSeedPreview,
@@ -30,9 +33,13 @@ import type {
   VoiceDistillation,
   VoiceProfile,
   OutputRevision,
+  PartnerFeedback,
+  PartnerFeedbackInput,
   WorkflowRecipe,
   WorkflowRecipeInput,
-  WorkflowRecipePreview
+  WorkflowRecipePreview,
+  UsageLimit,
+  UsageStatus
 } from "../../shared/src";
 import { DEFAULT_PROMPT_TEMPLATES, DEFAULT_VOICE_PROFILE, DEFAULT_WORKFLOW_RECIPES } from "../../shared/src";
 import { GRID_PROMPT_TEMPLATES, GRID_RECIPE, GRID_VOICE_PROFILE } from "./gridContent";
@@ -49,9 +56,36 @@ const parse = <T>(value: unknown, fallback: T): T => {
     return fallback;
   }
 };
+const numberEnv = (key: string): number | undefined => {
+  const value = process.env[key];
+  if (value === undefined || value === "") return undefined;
+  const parsed = Number(value);
+  return Number.isFinite(parsed) && parsed >= 0 ? parsed : undefined;
+};
 
 export const wordCount = (body: string) =>
   body.trim().length === 0 ? 0 : body.trim().split(/\s+/).length;
+
+const OWNER_TABLES = [
+  "posts",
+  "topic_ideas",
+  "seo_packages",
+  "image_assets",
+  "schedule_entries",
+  "generation_records",
+  "voice_distillations",
+  "corpus_sources",
+  "corpus_segments",
+  "brief_seeds",
+  "repurpose_packages",
+  "voice_profiles",
+  "shows",
+  "experiments",
+  "territories",
+  "usage_limits",
+  "activation_events",
+  "partner_feedback"
+];
 
 export class Repository {
   constructor(private db: AppDatabase, private fallbackOwner: string = "owner-default") {}
@@ -1083,8 +1117,8 @@ export class Repository {
     await this.db
       .prepare(
         `INSERT INTO generation_records
-        (id, owner_id, stage, content, provider, model, prompt_version_id, brief_json, retrieved_post_ids, corpus_segment_ids, citation_flags, quality_report_id, prompt_tokens, completion_tokens, total_tokens, cost, created_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+        (id, owner_id, stage, content, provider, model, prompt_version_id, brief_json, retrieved_post_ids, corpus_segment_ids, citation_flags, quality_report_id, prompt_tokens, completion_tokens, total_tokens, cost, latency_ms, fallback_model, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
       )
       .run(
         item.id,
@@ -1103,6 +1137,8 @@ export class Repository {
         item.usage?.completionTokens ?? null,
         item.usage?.totalTokens ?? null,
         item.usage?.cost ?? null,
+        item.usage?.latencyMs ?? null,
+        item.usage?.fallbackModel ?? null,
         item.createdAt
       );
     return item;
@@ -1124,6 +1160,230 @@ export class Repository {
     await this.db
       .prepare("UPDATE generation_records SET quality_report_id = ? WHERE id = ?")
       .run(qualityReportId, id);
+  }
+
+  // ---- Instance settings (global kv, not owner-scoped) ----
+
+  // Durable model profile: survives restarts (the Labs switch used to be
+  // process-env only). Loaded once at boot into process.env; written on PUT.
+  async getModelProfileSetting(): Promise<string | undefined> {
+    const row = await this.db.prepare("SELECT value FROM kv WHERE key = ?").get("modelProfile");
+    return row?.value ? String(row.value) : undefined;
+  }
+
+  async setModelProfileSetting(profile: string): Promise<void> {
+    await this.db
+      .prepare("INSERT INTO kv (key, value) VALUES (?, ?) ON CONFLICT (key) DO UPDATE SET value=EXCLUDED.value")
+      .run("modelProfile", profile);
+  }
+
+  // ---- Waitlist (public: the landing page's "Request an invite") ----
+
+  async addToWaitlist(email: string, note?: string): Promise<void> {
+    await this.db
+      .prepare("INSERT INTO waitlist (email, note, created_at) VALUES (?, ?, ?) ON CONFLICT (email) DO NOTHING")
+      .run(email, note ?? null, now());
+  }
+
+  async waitlistCount(): Promise<number> {
+    const row = await this.db.prepare("SELECT COUNT(*) AS count FROM waitlist").get<{ count: number }>();
+    return Number(row?.count ?? 0);
+  }
+
+  // ---- Design-partner readiness: usage limits, activation, feedback ----
+
+  async getUsageLimit(ownerId = this.owner): Promise<UsageLimit | undefined> {
+    const row = await this.db.prepare("SELECT * FROM usage_limits WHERE owner_id = ?").get(ownerId);
+    return row ? rowToUsageLimit(row) : undefined;
+  }
+
+  async setUsageLimitForOwner(
+    ownerId: string,
+    input: { dailyLimitUsd?: number; monthlyLimitUsd?: number; disabled?: boolean }
+  ): Promise<UsageLimit> {
+    const existing = await this.getUsageLimit(ownerId);
+    const ts = now();
+    const item: UsageLimit = {
+      ownerId,
+      dailyLimitUsd: input.dailyLimitUsd,
+      monthlyLimitUsd: input.monthlyLimitUsd,
+      disabled: input.disabled ?? false,
+      createdAt: existing?.createdAt ?? ts,
+      updatedAt: ts
+    };
+    await this.db
+      .prepare(
+        `INSERT INTO usage_limits (owner_id, daily_limit_usd, monthly_limit_usd, disabled, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?)
+        ON CONFLICT (owner_id) DO UPDATE SET
+          daily_limit_usd=EXCLUDED.daily_limit_usd,
+          monthly_limit_usd=EXCLUDED.monthly_limit_usd,
+          disabled=EXCLUDED.disabled,
+          updated_at=EXCLUDED.updated_at`
+      )
+      .run(
+        item.ownerId,
+        item.dailyLimitUsd ?? null,
+        item.monthlyLimitUsd ?? null,
+        item.disabled ? 1 : 0,
+        item.createdAt,
+        item.updatedAt
+      );
+    return item;
+  }
+
+  async usageStatus(provider: "mock" | "openrouter", ownerId = this.owner): Promise<UsageStatus> {
+    const spend = await this.spendForOwner(ownerId);
+    const limit = await this.getUsageLimit(ownerId);
+    const dailyLimitUsd = limit?.dailyLimitUsd ?? numberEnv("DEFAULT_DAILY_COST_LIMIT_USD");
+    const monthlyLimitUsd = limit?.monthlyLimitUsd ?? numberEnv("DEFAULT_MONTHLY_COST_LIMIT_USD");
+    const disabled = limit?.disabled ?? false;
+    const dailyBlocked = dailyLimitUsd !== undefined && spend.today >= dailyLimitUsd;
+    const monthlyBlocked = monthlyLimitUsd !== undefined && spend.month >= monthlyLimitUsd;
+    const blocked = provider === "openrouter" && !disabled && (dailyBlocked || monthlyBlocked);
+    return {
+      ownerId,
+      provider,
+      dailySpendUsd: spend.today,
+      monthlySpendUsd: spend.month,
+      dailyLimitUsd,
+      monthlyLimitUsd,
+      disabled,
+      blocked,
+      reason: blocked
+        ? dailyBlocked
+          ? `Daily spend cap reached ($${spend.today.toFixed(4)} / $${dailyLimitUsd?.toFixed(2)})`
+          : `Monthly spend cap reached ($${spend.month.toFixed(4)} / $${monthlyLimitUsd?.toFixed(2)})`
+        : undefined
+    };
+  }
+
+  async saveActivationEvent(input: ActivationEventInput): Promise<ActivationEvent> {
+    const item: ActivationEvent = {
+      ...input,
+      id: randomUUID(),
+      ownerId: this.owner,
+      metadata: input.metadata ?? {},
+      createdAt: now()
+    };
+    await this.db
+      .prepare(
+        `INSERT INTO activation_events (id, owner_id, type, draft_post_id, generation_id, metadata, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?)`
+      )
+      .run(
+        item.id,
+        item.ownerId,
+        item.type,
+        item.draftPostId ?? null,
+        item.generationId ?? null,
+        json(item.metadata),
+        item.createdAt
+      );
+    return item;
+  }
+
+  async savePartnerFeedback(input: PartnerFeedbackInput): Promise<PartnerFeedback> {
+    const item: PartnerFeedback = {
+      ...input,
+      id: randomUUID(),
+      ownerId: this.owner,
+      notes: input.notes ?? "",
+      createdAt: now()
+    };
+    await this.db
+      .prepare(
+        `INSERT INTO partner_feedback (id, owner_id, draft_post_id, generation_id, voice_match, edit_effort, repeat_intent, notes, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+      )
+      .run(
+        item.id,
+        item.ownerId,
+        item.draftPostId ?? null,
+        item.generationId ?? null,
+        item.voiceMatch,
+        item.editEffort,
+        item.repeatIntent ? 1 : 0,
+        item.notes,
+        item.createdAt
+    );
+    return item;
+  }
+
+  async listActivationEvents(ownerId = this.owner): Promise<ActivationEvent[]> {
+    return (await this.db
+      .prepare("SELECT * FROM activation_events WHERE owner_id = ? ORDER BY created_at DESC")
+      .all(ownerId))
+      .map(rowToActivationEvent);
+  }
+
+  async listPartnerFeedback(ownerId = this.owner): Promise<PartnerFeedback[]> {
+    return (await this.db
+      .prepare("SELECT * FROM partner_feedback WHERE owner_id = ? ORDER BY created_at DESC")
+      .all(ownerId))
+      .map(rowToPartnerFeedback);
+  }
+
+  async readinessStats(): Promise<Pick<AdminReadiness, "ownerDefaultCounts" | "userCount" | "recentSpendUsd" | "feedbackCount" | "waitlistCount">> {
+    const ownerDefaultCounts: Record<string, number> = {};
+    for (const table of OWNER_TABLES) {
+      const row = await this.db.prepare(`SELECT COUNT(*) AS count FROM ${table} WHERE owner_id = ?`).get("owner-default");
+      ownerDefaultCounts[table] = Number(row?.count ?? 0);
+    }
+    const users = await this.db.prepare("SELECT COUNT(*) AS count FROM users").get<{ count: number }>();
+    const feedback = await this.db.prepare("SELECT COUNT(*) AS count FROM partner_feedback").get<{ count: number }>();
+    const spend = await this.spendForAllOwners();
+    return {
+      ownerDefaultCounts,
+      userCount: Number(users?.count ?? 0),
+      recentSpendUsd: { today: spend.today, month: spend.month, allTime: spend.allTime },
+      feedbackCount: Number(feedback?.count ?? 0),
+      waitlistCount: await this.waitlistCount()
+    };
+  }
+
+  private async spendForOwner(ownerId = this.owner) {
+    const startOfDay = new Date();
+    startOfDay.setUTCHours(0, 0, 0, 0);
+    const startOfMonth = new Date(Date.UTC(startOfDay.getUTCFullYear(), startOfDay.getUTCMonth(), 1));
+    const [today, month, allTime] = await Promise.all([
+      this.sumSpend(ownerId, startOfDay.toISOString()),
+      this.sumSpend(ownerId, startOfMonth.toISOString()),
+      this.sumSpend(ownerId)
+    ]);
+    return { today, month, allTime };
+  }
+
+  private async spendForAllOwners() {
+    const startOfDay = new Date();
+    startOfDay.setUTCHours(0, 0, 0, 0);
+    const startOfMonth = new Date(Date.UTC(startOfDay.getUTCFullYear(), startOfDay.getUTCMonth(), 1));
+    const [today, month, allTime] = await Promise.all([
+      this.sumSpendAll(startOfDay.toISOString()),
+      this.sumSpendAll(startOfMonth.toISOString()),
+      this.sumSpendAll()
+    ]);
+    return { today, month, allTime };
+  }
+
+  private async sumSpend(ownerId: string, since?: string) {
+    const sql = since
+      ? "SELECT COALESCE(SUM(cost), 0) AS total FROM generation_records WHERE owner_id = ? AND created_at >= ?"
+      : "SELECT COALESCE(SUM(cost), 0) AS total FROM generation_records WHERE owner_id = ?";
+    const row = since
+      ? await this.db.prepare(sql).get<{ total: number }>(ownerId, since)
+      : await this.db.prepare(sql).get<{ total: number }>(ownerId);
+    return Number(row?.total ?? 0);
+  }
+
+  private async sumSpendAll(since?: string) {
+    const sql = since
+      ? "SELECT COALESCE(SUM(cost), 0) AS total FROM generation_records WHERE created_at >= ?"
+      : "SELECT COALESCE(SUM(cost), 0) AS total FROM generation_records";
+    const row = since
+      ? await this.db.prepare(sql).get<{ total: number }>(since)
+      : await this.db.prepare(sql).get<{ total: number }>();
+    return Number(row?.total ?? 0);
   }
 
   private async listPromptVersions(templateId: string): Promise<PromptVersion[]> {
@@ -1371,15 +1631,55 @@ function rowToGenerationRecord(row: Record<string, unknown>): GenerationRecord {
   };
 }
 
+function rowToUsageLimit(row: Record<string, unknown>): UsageLimit {
+  return {
+    ownerId: String(row.owner_id),
+    dailyLimitUsd: row.daily_limit_usd === null || row.daily_limit_usd === undefined ? undefined : Number(row.daily_limit_usd),
+    monthlyLimitUsd:
+      row.monthly_limit_usd === null || row.monthly_limit_usd === undefined ? undefined : Number(row.monthly_limit_usd),
+    disabled: Boolean(Number(row.disabled ?? 0)),
+    createdAt: String(row.created_at),
+    updatedAt: String(row.updated_at)
+  };
+}
+
+function rowToActivationEvent(row: Record<string, unknown>): ActivationEvent {
+  return {
+    id: String(row.id),
+    ownerId: String(row.owner_id),
+    type: row.type as ActivationEvent["type"],
+    draftPostId: row.draft_post_id ? String(row.draft_post_id) : undefined,
+    generationId: row.generation_id ? String(row.generation_id) : undefined,
+    metadata: parse<Record<string, unknown>>(row.metadata, {}),
+    createdAt: String(row.created_at)
+  };
+}
+
+function rowToPartnerFeedback(row: Record<string, unknown>): PartnerFeedback {
+  return {
+    id: String(row.id),
+    ownerId: String(row.owner_id),
+    draftPostId: row.draft_post_id ? String(row.draft_post_id) : undefined,
+    generationId: row.generation_id ? String(row.generation_id) : undefined,
+    voiceMatch: Number(row.voice_match),
+    editEffort: row.edit_effort as PartnerFeedback["editEffort"],
+    repeatIntent: Boolean(Number(row.repeat_intent ?? 0)),
+    notes: String(row.notes ?? ""),
+    createdAt: String(row.created_at)
+  };
+}
+
 function usageFromRow(row: Record<string, unknown>): GenerationRecord["usage"] {
-  const fields = [row.prompt_tokens, row.completion_tokens, row.total_tokens, row.cost];
+  const fields = [row.prompt_tokens, row.completion_tokens, row.total_tokens, row.cost, row.latency_ms, row.fallback_model];
   if (fields.every((value) => value === null || value === undefined)) return undefined;
   return {
     promptTokens: row.prompt_tokens === null || row.prompt_tokens === undefined ? undefined : Number(row.prompt_tokens),
     completionTokens:
       row.completion_tokens === null || row.completion_tokens === undefined ? undefined : Number(row.completion_tokens),
     totalTokens: row.total_tokens === null || row.total_tokens === undefined ? undefined : Number(row.total_tokens),
-    cost: row.cost === null || row.cost === undefined ? undefined : Number(row.cost)
+    cost: row.cost === null || row.cost === undefined ? undefined : Number(row.cost),
+    latencyMs: row.latency_ms === null || row.latency_ms === undefined ? undefined : Number(row.latency_ms),
+    fallbackModel: row.fallback_model === null || row.fallback_model === undefined ? undefined : String(row.fallback_model)
   };
 }
 

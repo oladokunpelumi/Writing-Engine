@@ -1,94 +1,67 @@
-# Co-Create Product Design Audit
+# Co-Create Product Design Audit - Live V2 Re-Audit
 
-Date: 2026-06-29
-Companion: `docs/brand-system.md` (voice + copy), `docs/visual-ui-audit.md` (visual moves).
+Date: 2026-07-01
+Status: live product re-audit against production shell plus local mock journey
 
 ## Executive Read
 
-The design target is not "AI writing app." It is **a creative partner that can hold the messy, contradictory self and return a more formed version without stealing authorship.** The product promise, said plainly:
+The core product design promise is now visible in the shipped product. A first-time local mock user can enter with notes, shape a draft, polish with relationship-named moves, and finish with "Still yours. Now shaped." The experience now feels more like a co-creator than a control panel.
 
-> Bring the unfinished self — the half-thoughts, the contradictions, the thing you can't stop thinking about. Be met. Leave with work that is transformed but still unmistakably yours.
+The remaining risk is design-partner activation, not IA. Production is invite-only and auth-required, which is correct for this phase, but the journey cannot yet be audited end-to-end on production without an authenticated session. The next quality bar is a measured "invite DM -> registered account -> first draft in one sitting" path for a brand-new writer.
 
-The current flow (Bring → Draft → Polish → Done) is the correct spine and the redesign already removed the old dashboard sprawl. The remaining work is **emotional and relational**, not structural: the product should *receive* before it *processes*, *reflect* rather than *replace*, and keep the writer feeling like the author at every step. Below, each journey stage gets: what works · the gap · the P0/P1 move.
+## Closure update — 2026-07-02
 
-Implementation note: the active build shipped the P0 relationship pass and several P1/P2 pieces: "Messy is welcome here," notes-first Bring, "Shape it," the other-side field, Become reveal copy, what-changed/what-it-kept, grouped/renamed Polish moves, "Still yours. Now shaped," Voice mirror, Library start-here arc, and a runtime Labs model-profile control.
+- **P0 "owner reassignment remains an admin-only risk" → closed:** production reassignment run; the registered owner account now holds all 37 posts + full content; 0 rows on `owner-default`; probe users deleted.
+- The invite-to-first-draft dry run remains the founder's next action (checklist in `docs/design-partner-guide.md`).
 
-## Product promise — current vs. stronger
+## Acceptance-Criteria Scorecard
 
-- **Current (implicit):** "Turn your notes into a finished piece in your voice." Accurate, task-shaped.
-- **Stronger:** "Lay down what you actually have — messy, raw, contradictory — and a co-creator meets you, finds the through-line, and hands back something formed that still sounds like you." Same engine; a relationship instead of a pipeline.
+| Criterion | Status | Evidence |
+| --- | --- | --- |
+| Welcome/auth shell is branded | Met | `live-welcome-2026-07-01.png` shows Co-Create mark/name on production login. |
+| Bring is notes-first | Met | `local-bring-2026-07-01.png` shows "Lay down what you have" and a primary notes textarea before detail fields. |
+| CTA explains readiness | Met | Screenshot shows disabled "Shape it" on empty notes; `client/src/App.tsx` contains disabled begin copy. |
+| Draft preserves authorship | Met | `local-draft-2026-07-01.png` shows "A first form. Still yours" plus editable draft area. |
+| What changed / what it kept exists | Met | Draft screenshot includes both affordances above the text area. |
+| Polish moves are relationship/grouped verbs | Met | `local-polish-2026-07-01.png` shows Shape, Reflect, Dress, and Check move groups. |
+| Done settles rather than gamifies | Met | `local-done-2026-07-01.png` shows "Still yours. Now shaped." and quiet actions. |
+| Voice mirror is implemented | Met from source/local route | `client/src/App.tsx` contains the Mirror treatment and `badge-dusk`; production interior is auth-gated. |
+| Brand-new production activation is proven | Unverified | Requires authenticated production account and design-partner journey telemetry. |
 
-## Journey audit
+## Evidence Table
 
-### Onboarding (WelcomeScreen)
-- **Works:** "It doesn't write for you. It writes as you." is the right line. Two honest doors (Just start / Build your voice) respect agency.
-- **Gap:** It frames a *capability* ("paste posts, it learns") more than an *invitation*. A first-timer doesn't yet feel met.
-- **P0:** Add one receptive line — "Messy is welcome here. Start with whatever you have." **P1:** After "Build your voice," reflect something back immediately ("Here's what I'm hearing in how you write: …") so the first interaction is a mirror, not an upload.
+| Evidence | Result |
+| --- | --- |
+| Production health/auth | `authRequired: true`; production route is invite-only. |
+| Production profile/auth probe | `/api/model-profile` returned `401 Authentication required`; interiors require authenticated session. |
+| Registration negative probe | Invalid invite code returned `HTTP/2 403 {"error":"Invalid invite code"}`. |
+| Mock journey screenshots | Bring, Draft, Polish, Done, and mobile Create screenshots saved under `docs/audit-assets/`. |
+| Typecheck | `npm run typecheck` passed. |
+| Authenticated production interior | Unverified: Chrome/browser-harness attach blocked; no credentials/session supplied in this run. |
 
-### Create · Bring
-- **Works:** One line + one notes box is the right reduction; detail is collapsed.
-- **Gap:** "What do you want to write about?" + a topic field can feel like *homework / a search box*. The promise is to receive fragments, but the field still asks for a tidy topic. "Draft it" is clear but not wand-like.
-- **P0:** Lead with the notes box, not the topic line; relabel intake to invite fragments — placeholder "A thought, a voice note, a contradiction, a sentence you can't stop thinking about." Rename the primary action to **"Shape it"** (or "Begin"). **P1:** Accept a contradiction explicitly — a subtle "add a tension / the other side" affordance — since "lay down the opposite and be met" is core to the vision.
+## Live Findings
 
-### Create · Draft
-- **Works:** The draft is fully editable; "written as you" badge + "Edit freely — it's yours" protect authorship.
-- **Gap:** The transformation is *invisible* — the most important moment in the product (fragments → formed piece) is an unmarked textarea swap. There's no felt "it met me."
-- **P0:** Mark the reveal (see visual audit) and pair it with one line: **"A first form, written in your cadence. Still yours."** **P1:** Offer a gentle "what changed / what it kept" affordance so the writer sees the partner's hand without losing ownership.
+- **P0: invite-to-first-draft needs measured activation.** The local flow works, but the production design-partner funnel should be tested with a new account from invite to first draft.
+- **P0: owner reassignment remains an admin-only risk.** The repo includes `scripts/reassign-owner.ts`; whether `owner-default` content has been reassigned in production could not be verified here.
+- **P1: feedback loop is missing from the design-partner product surface.** There is no obvious in-app "this sounded like me / missed me" capture on Done.
+- **P1: Voice mirror is strong but still form-heavy below the portrait.** Good enough for v2; next pass should make "more this / less that" an actual loop.
 
-### Polish moves
-- **Works:** Optional, non-linear, reversible — "play, then come back to your piece" is exactly right for a playground.
-- **Gap:** The move names are *mechanical* (Sharpen, Hook, Desire, Score). They describe operations, not the relationship. They also aren't grouped, so they read as a toolbar.
-- **P0:** Rename to grounded-mythic verbs and group by intent:
-  - **Shape:** Sharpen → "Tighten", Refine → **"Meet the reader"**
-  - **Reflect:** Hook → **"Open a mirror"**, Desire → **"Give it want"**
-  - **Dress:** Images → "Make it visible"
-  - **Check:** Score → **"Clear the static"**
-  **P1:** Each move opens with one line of intent in voice, not a parameter dump.
+## Next Quality Bar
 
-### Done
-- **Works:** Save / Copy / Repurpose / SEO grouped as one finish step; auto-save reassurance present.
-- **Gap:** "Ship it" is a product verb, not a Co-Create verb; the moment of completion isn't a settling.
-- **P0:** Reframe to **"Still yours. Now shaped."** with quieter actions ("Save the piece," "Release it"). **P1:** A one-line reflection of the arc ("You brought 3 fragments; this became a 900-word piece in your voice").
+**P0**
+- Run one real design-partner dry run: invite code, account creation, voice setup or skip, first draft, save.
+- Confirm owner reassignment before the owner expects to see migrated library content.
 
-### Voice (the mirror)
-- **Works:** Editable profile, multi-voice, distillation from the archive.
-- **Gap:** It presents as *settings* (pillars, register, constraints). The vision says Voice is where the writer *sees themselves* — it should read as a mirror, not a config form.
-- **P0:** Lead the Voice screen with a reflected portrait ("Here's how you sound: …") above the editable fields. **P1:** Let the writer react ("more this / less that") and re-distill — a relationship, not a form.
+**P1**
+- Add a lightweight feedback instrument after Done: voice match, edit amount, and "what felt off?"
+- Make "more this / less that" trigger a re-distill loop after imports.
 
-### Library (the body of work)
-- **Works:** Full view/edit, status filter, reading order — the archive is real.
-- **Gap:** It's a list, not a *body of work*. The brand frames the archive as one author's arc.
-- **P1:** A "start here" / arc view that treats the collection as a coherent voice over time (reuses existing reading-order).
+**P2**
+- Turn Library start-here arc into an onboarding asset for design partners: "read these three to understand the founder's voice."
 
-### Labs (advanced instruments)
-- **Works:** Correctly hidden; power preserved without crowding the path.
-- **Gap:** Framed as a grab-bag of features.
-- **P2:** Frame Labs as "advanced instruments" with one line each on *when you'd reach for it*, so discovery feels like growth, not clutter.
+## Acceptance Criteria V2
 
-## Roadmap
-
-**P0 (relationship + the wand)**
-- Bring: notes-first intake, fragment-inviting placeholder, "Shape it" primary action.
-- Draft: mark the reveal + "Still yours" line.
-- Polish: rename + group the moves (Shape / Reflect / Dress / Check).
-- Done: "Still yours. Now shaped." with quieter release actions.
-- One receptive onboarding line ("Messy is welcome here").
-
-**P1 (mirror + depth)**
-- Voice as a reflected portrait, not settings.
-- "What changed / what it kept" on the draft.
-- Contradiction-aware Bring ("add the other side").
-- Build-your-voice returns an immediate reflection.
-
-**P2 (arc + instruments)**
-- Library "start here" arc view.
-- Labs reframed as instruments with reach-for-it copy.
-
-## Acceptance criteria
-
-- A first-time user reaches a finished piece via the Bring→Draft→Polish→Done path without touching Labs, and reports feeling *met*, not *served*.
-- The draft reveal is a felt moment, accompanied by an authorship-preserving line.
-- Every Polish move name is a relationship verb grouped by intent; no bare mechanical labels on the core path.
-- The Voice screen opens with a reflection of the writer before any editable field.
-- Completion reads as "still yours, now shaped" — no growth-hacky "ship/optimize/unlock" language anywhere on the core path (see brand voice do-not list).
-- Copy changes are content-only where possible (labels/placeholders/headings), so P0 is low-risk to implement.
+- A stranger with an invite can reach a first draft in one sitting without founder hand-holding.
+- The first draft path is observable: start time, first draft time, save event, and feedback.
+- The owner's migrated library is visible to the intended owner account before partner onboarding.
+- Core path copy continues to avoid "optimize", "generate high-converting", and other do-not-list language.

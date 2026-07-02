@@ -70,7 +70,7 @@
   @keyframes fade { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }
   .badge {
     display: inline-block; margin-top: 12px; font-size: 0.7rem; font-weight: 700;
-    letter-spacing: 0.08em; text-transform: uppercase; color: var(--ember);
+    letter-spacing: 0.08em; text-transform: uppercase; color: var(--ink);
     background: var(--ember-wash); border: 1px solid #ecd9bf;
     padding: 4px 9px; border-radius: 999px;
   }
@@ -115,7 +115,8 @@
   .move .to { font-family: "Syne", sans-serif; font-weight: 700; font-size: 1.05rem; }
   .move.shape .group { color: var(--ink); }
   .move.reflect .group { color: var(--dusk); }
-  .move.dress .group { color: var(--ember); }
+  .move.dress { border-color: #ecd9bf; }
+  .move.dress .group { color: var(--ink); }
   .move.check .group { color: var(--tide); }
 
   .lockups { display: flex; flex-wrap: wrap; gap: 18px; margin-top: 20px; align-items: center; }
@@ -172,11 +173,12 @@
       <div class="sw"><div class="chip" style="background:#111827"></div><div class="meta"><div class="name" style="color:var(--ink)">Ink</div><div class="hex">#111827</div><div class="role">Authorship — text, the mark, primary action.</div></div></div>
       <div class="sw"><div class="chip" style="background:#f5f1e8;border-bottom:1px solid var(--line)"></div><div class="meta"><div class="name">Paper</div><div class="hex">#F5F1E8</div><div class="role">The field — warm, receptive ground.</div></div></div>
       <div class="sw"><div class="chip" style="background:#0e7490"></div><div class="meta"><div class="name" style="color:var(--tide)">Tide</div><div class="hex">#0E7490</div><div class="role">Intelligence / clarity — the engine's presence.</div></div></div>
-      <div class="sw"><div class="chip" style="background:#c26b2c"></div><div class="meta"><div class="name" style="color:var(--ember)">Ember</div><div class="hex">#C26B2C</div><div class="role">Transformation — the reveal, the wand's warmth.</div></div></div>
+      <div class="sw"><div class="chip" style="background:#c26b2c"></div><div class="meta"><div class="name">Ember</div><div class="hex">#C26B2C</div><div class="role">Transformation — the reveal, the wand's warmth.</div></div></div>
       <div class="sw"><div class="chip" style="background:#6e5b92"></div><div class="meta"><div class="name" style="color:var(--dusk)">Dusk</div><div class="hex">#6E5B92</div><div class="role">Reflection — the mirror; Voice and reflect-moves.</div></div></div>
       <div class="sw"><div class="chip" style="background:linear-gradient(90deg,#f3e3ce 50%,#ece7f2 50%)"></div><div class="meta"><div class="name">Washes</div><div class="hex">#F3E3CE · #ECE7F2</div><div class="role">Soft ember + dusk for state backgrounds.</div></div></div>
     </div>
-    <p style="margin-top:18px;color:var(--muted);font-size:0.92rem">Avoid: gradient-orb decoration · purple-blue SaaS sameness · beige-only flatness · mystical clutter.</p>
+    <p style="margin-top:18px;color:var(--muted);font-size:0.92rem">Contrast rule: ember is a badge, border, icon, wash, or large-display accent only. Use ink, dusk, or tide for normal text that must pass 4.5:1 on paper or wash backgrounds.</p>
+    <p style="color:var(--muted);font-size:0.92rem">Avoid: gradient-orb decoration · purple-blue SaaS sameness · beige-only flatness · mystical clutter.</p>
   </section>
 
   <section>
@@ -219,7 +221,7 @@
     <h2>Enter. Become. Settle.</h2>
     <div class="cols">
       <div class="col"><h3 style="color:var(--ink)">Enter · ~250ms</h3><p style="margin:0;color:var(--muted)">Crossing the threshold into Create or a new step: a brief settle-up + fade.</p></div>
-      <div class="col"><h3 style="color:var(--ember)">Become · ~620ms</h3><p style="margin:0;color:var(--muted)">The draft reveal — the piece rises, an ember wash blooms and recedes, the badge fades in. The signature moment (above).</p></div>
+      <div class="col"><h3>Become · ~620ms</h3><p style="margin:0;color:var(--muted)">The draft reveal — the piece rises, an ember wash blooms and recedes, the badge fades in. The signature moment (above).</p></div>
     </div>
     <div class="cols" style="margin-top:12px">
       <div class="col"><h3 style="color:var(--dusk)">Settle · ~200ms</h3><p style="margin:0;color:var(--muted)">Done — a calm downward settle. No confetti. “Still yours. Now shaped.”</p></div>

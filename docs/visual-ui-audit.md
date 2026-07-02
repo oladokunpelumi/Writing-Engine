@@ -1,89 +1,64 @@
-# Co-Create Visual / UI Audit
+# Co-Create Visual / UI Audit - Live V2 Re-Audit
 
-Date: 2026-06-29
-Screens referenced: original audit set (`docs/audit-assets/app-desktop-create.png`, `app-desktop-create-flow.png`, `app-mobile-create.png`, `app-mobile-create-flow.png`) plus shipped implementation set (`app-desktop-shipped.png`, `app-mobile-shipped.png`, `app-mobile-nav-shipped.png`, `app-desktop-bring-shipped.png`, `app-desktop-draft-shipped.png`, `app-desktop-polish-shipped.png`, `app-desktop-done-shipped.png`).
-Companion: `docs/brand-system.md` (palette, type, mark) and `docs/brand/brand-system.html` (rendered identity).
+Date: 2026-07-01
+Status: live product re-audit against production shell plus identical local mock interiors
 
 ## Executive Read
 
-The information architecture is already right — Create / Library / Voice with Labs hidden, one calm column, a four-step spine. The current visual system says **"clean, trustworthy writing tool."** It does not yet say **"you have stepped into an engine that will meet what you bring and reflect a higher version back."** The gap is not decoration. It is **ritual, depth, and visible transformation** — the three things that would make a writer *feel* the brand promise instead of read it.
+The shipped v2 now looks like Co-Create rather than a generic writing app. Production serves the custom mark as favicon, the root HTML title is `Co-Create`, the OG image exists, and the local mock flow shows the intended chamber: notes-first Bring, warm Draft, grouped Polish moves, quiet Done, and mobile-first engine content.
 
-Direction (locked): **elevate the playground, do not rebuild it.** Keep Bring→Draft→Polish→Done. Add the felt sense of a co-creator and a threshold. The current build is the right skeleton; this audit is about giving it a nervous system.
+At audit time, the highest live defect was outside the pixels of the app: `og:image` was a relative URL (`/og-image.svg`). Design-Partner Readiness P0 changed `client/index.html` to the absolute production URL. The second defect was accessibility: ember text on paper is only 3.43:1 and ember text on ember wash is 3.07:1, so ember is acceptable for badges/UI accents but not normal body text at WCAG AA.
 
-Implementation note: the shipped pass now includes the custom mark, favicon/OG, ember/dusk tokens, mobile top bar + sheet, notes-first Bring, the `become` reveal class, grouped Polish moves, two panel tiers, and the "Still yours. Now shaped." Done state. Remaining observations below are preserved as the audit rationale and future quality bar.
+Implementation follow-up, 2026-07-01: `client/index.html` now uses `https://writing-engine-production.up.railway.app/og-image.svg`, and normal-size product `text-ember` usage was removed in favor of ink/dusk/tide text with ember retained for accents.
 
-## What works (keep)
+Closure update, 2026-07-02: **P1 mobile step labels → closed** — Bring/Draft/Polish/Done text labels are now always visible (compact type + tighter connectors at 390px), not bare numbers.
 
-- The calm paper field (`#f5f1e8`), generous whitespace, single reading column — already anti-dashboard.
-- Three-item primary spine + collapsed Labs — complexity is hidden, not lost.
-- The progress spine (Bring→Draft→Polish→Done) is the right ritual scaffold.
-- Syne display + DM Sans body is a strong, distinctive pairing.
-- Motion is accessibility-safe (`prefers-reduced-motion` honored). Build on that, don't regress it.
+## Acceptance-Criteria Scorecard
 
-## Main gaps
+| Criterion | Status | Evidence |
+| --- | --- | --- |
+| Custom mark replaces stock icon | Met | Production `/favicon.svg` returns the bespoke two-stroke Co-Create mark; `live-welcome-2026-07-01.png` shows the mark on the auth shell. |
+| Favicon and OG image exist | Met | `/favicon.svg` and `/og-image.svg` return `200`; `client/index.html` now points `og:image` to the absolute production URL. |
+| Ember/dusk tokens exist and map to states | Met | `client/tailwind.config.ts` defines ember/dusk/washes; screenshots show ember for Draft/Done and grouped moves. |
+| Mobile leads with the engine | Met | `local-mobile-create-2026-07-01.png` first paints the top bar, step spine, and Bring surface rather than a full sidebar. |
+| Step labels remain legible | Partly met | Desktop labels are legible; mobile screenshot keeps numbered step controls but omits text labels at 390px. |
+| Draft reveal is present | Met | `local-draft-2026-07-01.png` shows the warm elevated draft surface and "written as you" badge after the reveal state. |
+| Living piece outranks instruments | Met | `local-polish-2026-07-01.png` keeps the draft centered below smaller move instruments. |
+| Text contrast passes | Partly met | Ink 15.74:1, dusk 5.21:1, tide 4.75:1 on paper pass; ember 3.43:1 on paper and 3.07:1 on ember wash fail for normal text. |
 
-**P0 — blocks the promise**
+## Evidence Table
 
-1. **No threshold; no transformation moment.** The single most important screen — the instant the **draft first appears** — currently just swaps a textarea in. This is *the* magic-wand beat and it passes unmarked. There is no "you brought fragments → here is a formed thing, in your voice" reveal.
-2. **The mark is a stock icon.** A Lucide `PenLine` in an ink square reads "generic SaaS." There is no ownable identity at the one spot every user sees first.
-3. **Mobile leads with the sidebar, not the engine.** On phones the nav stack sits above the welcome/Create content, and the step labels collapse to bare numbers — the first impression is a menu, not a threshold.
-4. **`brass`/gold is defined but unused; no reflection color.** The palette is ink + tide + paper only. The brand's two most meaningful states — *transformation* (ember/gold) and *reflection* (dusk/violet) — have no visual existence, so the app can't show them.
-5. **Disabled primary actions don't explain themselves.** "Draft it" sits grey with no reason; the engine should invite, not gate silently.
+| Evidence | Result |
+| --- | --- |
+| Production root HTML | `<title>Co-Create</title>`, description present, `og:title`, `og:description`, `og:type`; source now uses absolute `og:image`. |
+| Production favicon | `HTTP/2 200`, `content-type: image/svg+xml`, custom mark SVG. |
+| Production OG image | `HTTP/2 200`, `content-type: image/svg+xml`, mark plus "Still yours. Now shaped." |
+| Screenshots | `live-welcome-2026-07-01.png`, `local-bring-2026-07-01.png`, `local-draft-2026-07-01.png`, `local-polish-2026-07-01.png`, `local-done-2026-07-01.png`, `local-mobile-create-2026-07-01.png`. |
+| Contrast ratios | Ember/paper 3.43:1; dusk/paper 5.21:1; ink/paper 15.74:1; tide/paper 4.75:1; ember/ember-wash 3.07:1; dusk/dusk-wash 4.83:1. |
 
-**P1 — high-value polish**
+## Live Findings
 
-6. **The Polish "moves" read as a button row, not instruments.** Six equal chips (Sharpen/Refine/Hook/Desire/Images/Score) have no visual grouping by intent (shape vs. reflect vs. dress). They feel like a toolbar, not a set of deliberate moves you reach for.
-7. **Panels are uniform boxes.** Everything is a `desk-panel`: same border, same weight. There is no hierarchy between "your living piece" (should feel central, warm, lit) and "an instrument acting on it" (should feel secondary, recessive).
-8. **No empty-state warmth.** "No draft yet — go back to Bring" is functional, not inviting.
-9. **Depth is flat.** `shadow-sm` everywhere; nothing rises toward the writer at the moments that matter (the reveal, the active move).
+- **P0 closed in Design-Partner Readiness: social card URL is absolute.** Verify on the deployed HTML after release.
+- **P0 closed in Design-Partner Readiness: ember text no longer carries normal product body copy.** Keep ember for badges/icons/borders or increase size/weight; use ink/dusk/tide for normal text.
+- **P1: mobile step labels need one more pass.** The mobile layout is much better, but numeric-only steps are less self-explanatory than Bring/Draft/Polish/Done labels.
+- **P2: browser-harness capture is blocked.** Chrome remote-debugging required profile/Allow setup; screenshots were captured via Playwright instead.
 
-**P2 — atmosphere**
-
-10. No favicon, no social/OG image — the brand vanishes in a browser tab and a shared link.
-11. No motion language: transitions are incidental (a 2px hover lift), not a designed grammar of "entering," "becoming," "settling."
-
-## Direction: the engine reflects you back
-
-The felt sequence the visuals must support:
-
-1. **Threshold (Bring).** The writer arrives with unfinished, contradictory material. The surface should feel *receptive and unhurried* — a wide, calm intake that says "lay it down, messy is welcome," not a form with eight fields.
-2. **Becoming (Draft).** When the draft arrives, mark it. A brief, dignified reveal — light/warmth blooming (ember), the piece rising on the page — that says *transformation just happened, and it is still yours.* The "written as you" badge is the seed of this; it should be a moment, not a tag.
-3. **Reflection (Polish).** The moves are the co-creator offering perspectives (dusk/violet accent). The living piece stays centered and warm; instruments are quieter satellites around it.
-4. **Release (Done).** A settling, not a celebration — "still yours, now shaped."
-
-Visual principles: **fewer boxes, more thresholds. Light and depth as transformation cues, never decorative orbs. The writer's text is the warmest, most-lit object on every screen. The engine is present but recessive — a partner, not a chrome.**
-
-## Recommended visual changes
+## Next Quality Bar
 
 **P0**
-- **Design a reveal for the draft.** When `draft` first populates, animate a short threshold (respecting reduced-motion): the Draft card rises + an ember wash settles, the "written as you" badge fades in. One beat, ~600ms. This is the wand.
-- **Replace the mark.** Ship a real Co-Create mark (see `brand-system.md`: two strokes converging — "one and separate"). Use it in the sidebar, favicon, and OG.
-- **Extend the palette in `tailwind.config.ts`/`styles.css`:** add `ember` (transformation) and `dusk` (reflection), and put the existing `brass` to use. Wire them to the three states (badge/reveal = ember; Polish moves = dusk).
-- **Mobile: lead with the engine.** Collapse the sidebar into a top bar + sheet on small screens so Welcome/Create content is first; keep step labels (don't degrade to bare numbers).
-- **Explain disabled CTAs:** a one-line hint under "Draft it" ("Add a line or some notes to begin").
+- Verify absolute `og:image` on production after deploy.
+- Keep ember reserved for non-body accents unless contrast is increased.
 
 **P1**
-- **Group the Polish moves by intent:** Shape (Sharpen, Refine) · Reflect (Hook→"Open a mirror", Desire→"Give it want") · Dress (Images) · Check (Score). Small section labels; the living piece stays centered.
-- **Two panel tiers:** a warm, slightly elevated "piece" surface vs. recessive "instrument" surfaces (lighter, bordered, no shadow). Establishes hierarchy without new components.
-- **Warm empty states** in brand voice ("Nothing here yet — bring a fragment and watch it take form").
-- **Voice as the mirror:** give the Voice screen a reflective treatment (dusk accent) so it reads as "this is how you sound," not a settings form.
+- Restore compact mobile step labels or accessible visible text at 390px.
+- Add screenshot coverage for reduced-motion reveal state.
 
 **P2**
-- **A motion grammar:** define `enter` (threshold), `become` (reveal), `settle` (done) as named transitions, all reduced-motion-safe; document them in the brand system.
-- **Favicon + OG image** from the new mark.
-- **Texture, sparingly:** a faint paper grain on the field; never gradient orbs or mystical clutter (explicitly on the brand "avoid" list).
+- Add a paper texture only if it remains subtle and does not lower contrast.
 
-## Accessibility & responsiveness
+## Acceptance Criteria V2
 
-- Keep the `prefers-reduced-motion` guard; every new transition must have a static fallback (the reveal becomes an instant state change).
-- Maintain the tide focus ring; verify ember/dusk additions meet 4.5:1 contrast on paper for text, 3:1 for UI.
-- Mobile target 390px: sidebar→sheet, full-width fields, persistent step labels, thumb-reachable primary CTA.
-
-## Acceptance criteria
-
-- The draft reveal is a perceptible, dignified moment on desktop and mobile (and a clean instant-state under reduced-motion).
-- The sidebar mark is a custom Co-Create symbol, present as favicon and OG; "Co-Create" never appears as a bare browser-default tab.
-- Ember and dusk exist in the token system and are each bound to a brand state (transformation / reflection), used with restraint.
-- On a 390px viewport the first paint is the engine (threshold + content), not the nav; step labels remain legible.
-- The living piece is visibly the warmest, highest object on Draft and Polish; instruments read as secondary.
-- Nothing on the "avoid" list ships: no gradient orbs, no purple-blue SaaS sameness, no mystical clutter.
+- Shared links render a card with the Co-Create mark on major social scrapers.
+- No normal-sized text uses ember on paper or ember wash unless it reaches 4.5:1.
+- Mobile first paint still shows the engine and the user can identify each step without guessing.
+- Future audit screenshots are reproducible from a documented local mock script or working browser-harness attach.

@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import express, { type Request, type Response, type NextFunction } from "express";
 import {
+  ActivationEventInputSchema,
   BriefInputSchema,
   CorpusClassificationInputSchema,
   DiscoverRequestSchema,
@@ -17,6 +18,7 @@ import {
   GridSignalsRequestSchema,
   GridStoryRequestSchema,
   GridSynthesisRequestSchema,
+  PartnerFeedbackInputSchema,
   PostInputSchema,
   PromptTemplateInputSchema,
   PromptVersionInputSchema,
@@ -69,6 +71,7 @@ import { buildPreviousInputsPreview, combinedCorpusSource, type ImportContent } 
 import { applyDistillationToVoice, distillVoice } from "./voiceDistillation";
 import { desireScore, evaluateQuality, hookScore, rewriteSlop } from "./quality";
 import { HOOK_DOCTRINE, HOOK_STYLES, hookStyleDirective } from "../../shared/src";
+import { designPartnerReadiness } from "./readiness";
 
 export function createRouter(repo: Repository) {
   const router = express.Router();
@@ -127,6 +130,35 @@ export function createRouter(repo: Repository) {
     res.json({ token: signToken({ sub: user.id, email: user.email }), email: user.email });
   });
 
+  // Public: the landing page's "Request an invite". Deliberately before the auth
+  // gate; idempotent per email; input bounded to keep abuse surface small.
+  router.post("/waitlist", async (req, res, next) => {
+    try {
+      const email = String(req.body?.email ?? "").trim().toLowerCase().slice(0, 254);
+      const note = String(req.body?.note ?? "").trim().slice(0, 500);
+      if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+        res.status(400).json({ error: "A valid email is required" });
+        return;
+      }
+      await repo.addToWaitlist(email, note || undefined);
+      res.status(201).json({ ok: true });
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  router.get("/admin/readiness", async (req, res, next) => {
+    try {
+      if (!adminReadinessAllowed(req.header("x-admin-token"))) {
+        res.status(403).json({ error: "Admin token required" });
+        return;
+      }
+      res.json(await designPartnerReadiness(repo));
+    } catch (error) {
+      next(error);
+    }
+  });
+
   // Resolve the request owner and bind it for the rest of the chain via ALS so
   // the shared Repository scopes every query to this user.
   router.use((req: Request, res: Response, next: NextFunction) => {
@@ -144,17 +176,54 @@ export function createRouter(repo: Repository) {
     ownerContext.run(claims.sub, () => next());
   });
 
+  router.use(async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      if (!isCostGated(req)) {
+        next();
+        return;
+      }
+      const blocked = await usageBlockForRequest(repo, req.method, req.path);
+      if (blocked) {
+        res.status(blocked.statusCode).json({ error: blocked.error, usage: blocked.usage });
+        return;
+      }
+      next();
+    } catch (error) {
+      next(error);
+    }
+  });
+
   router.get("/model-profile", (_req, res) => {
     res.json({ profile: modelProfile() });
   });
 
-  router.put("/model-profile", (req, res) => {
+  router.get("/usage", async (_req, res) => res.json(await repo.usageStatus(aiProvider())));
+
+  router.post("/activation/event", async (req, res) => {
+    const parsed = ActivationEventInputSchema.parse(req.body);
+    res.status(201).json(await repo.saveActivationEvent(parsed));
+  });
+
+  router.post("/partner-feedback", async (req, res) => {
+    const parsed = PartnerFeedbackInputSchema.parse(req.body);
+    const feedback = await repo.savePartnerFeedback(parsed);
+    await repo.saveActivationEvent({
+      type: "feedback_submitted",
+      draftPostId: feedback.draftPostId,
+      generationId: feedback.generationId,
+      metadata: { feedbackId: feedback.id }
+    });
+    res.status(201).json(feedback);
+  });
+
+  router.put("/model-profile", async (req, res) => {
     const profile = String(req.body?.profile ?? "");
     if (!["cost-first", "balanced", "premium"].includes(profile)) {
       res.status(400).json({ error: "profile must be cost-first, balanced, or premium" });
       return;
     }
     process.env.MODEL_PROFILE = profile;
+    await repo.setModelProfileSetting(profile); // durable: survives restarts (loaded at boot)
     res.json({ profile: modelProfile() });
   });
 
@@ -1031,6 +1100,37 @@ export function createRouter(repo: Repository) {
   });
 
   return router;
+}
+
+export function adminReadinessAllowed(provided: string | undefined): boolean {
+  const expected = process.env.ADMIN_TOKEN;
+  return Boolean(expected && provided === expected);
+}
+
+export async function usageBlockForRequest(repo: Repository, method: string, path: string) {
+  if (!isCostGatedMethodPath(method, path)) return undefined;
+  const usage = await repo.usageStatus(aiProvider());
+  if (!usage.blocked) return undefined;
+  return { statusCode: 402, error: usage.reason ?? "Usage limit reached", usage };
+}
+
+function isCostGated(req: Request) {
+  return isCostGatedMethodPath(req.method, req.path);
+}
+
+export function isCostGatedMethodPath(method: string, path: string) {
+  if (method.toUpperCase() !== "POST") return false;
+  return [
+    "/generate/",
+    "/workflow/run",
+    "/grid/signals",
+    "/grid/synthesis",
+    "/grid/reviewgate",
+    "/grid/story",
+    "/experiments/run",
+    "/package/",
+    "/graph/"
+  ].some((prefix) => path.startsWith(prefix));
 }
 
 // Persist a completed final as a "living" draft post so a paid run is never

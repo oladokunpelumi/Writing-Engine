@@ -59,6 +59,7 @@ import type {
   Show,
   SeoPackage,
   TopicIdea,
+  UsageStatus,
   VisualIdentity,
   VoiceProfile,
   WorkflowRecipe,
@@ -113,6 +114,7 @@ export default function App() {
   const [workflows, setWorkflows] = useState<WorkflowRecipe[]>([]);
   const [promptTemplates, setPromptTemplates] = useState<PromptTemplate[]>([]);
   const [generations, setGenerations] = useState<GenerationRecord[]>([]);
+  const [usageStatus, setUsageStatus] = useState<UsageStatus | null>(null);
   const [schedules, setSchedules] = useState<ScheduleEntry[]>([]);
   const [brief, setBrief] = useState<BriefInput>(blankBrief);
   const [frame, setFrame] = useState("");
@@ -156,7 +158,7 @@ export default function App() {
   }
 
   async function refresh() {
-    const [nextVoice, nextVoices, nextShows, nextPosts, nextSchedules, nextPrompts, nextGenerations, nextCorpus, nextBriefSeeds, nextWorkflows] = await Promise.all([
+    const [nextVoice, nextVoices, nextShows, nextPosts, nextSchedules, nextPrompts, nextGenerations, nextCorpus, nextBriefSeeds, nextWorkflows, nextUsage] = await Promise.all([
       api.getVoice(),
       api.listVoices(),
       api.shows(),
@@ -166,7 +168,8 @@ export default function App() {
       api.generations(),
       api.corpus(),
       api.briefSeeds(),
-      api.workflows()
+      api.workflows(),
+      api.usage()
     ]);
     setVoice(nextVoice);
     setVoices(nextVoices);
@@ -176,6 +179,7 @@ export default function App() {
     setSchedules(nextSchedules);
     setPromptTemplates(nextPrompts);
     setGenerations(nextGenerations);
+    setUsageStatus(nextUsage);
     setCorpusSources(nextCorpus.sources);
     setCorpusSegments(nextCorpus.segments);
     setBriefSeeds(nextBriefSeeds);
@@ -196,12 +200,16 @@ export default function App() {
     }
   }
 
+  function trackActivation(type: "entered_create" | "first_notes_submitted" | "first_draft_completed" | "piece_saved", metadata: Record<string, unknown> = {}) {
+    void api.activationEvent({ type, draftPostId, generationId: lastGenerationId, metadata }).catch(() => undefined);
+  }
+
   const finalForPackage = finalText || draft;
   const pipelineReady = Boolean(brief.topic || brief.seed || brief.rawNotes);
   const totalSpend = useMemo(() => generations.reduce((sum, gen) => sum + (gen.usage?.cost ?? 0), 0), [generations]);
 
   if (health.authRequired && !authed) {
-    return <AuthScreen onAuthed={() => refresh()} />;
+    return <LandingScreen onAuthed={() => refresh()} />;
   }
 
   const setTabAndClose = (next: Tab) => {
@@ -285,6 +293,14 @@ export default function App() {
           <option value="premium">Premium polish</option>
         </select>
         <p className="mt-2 text-xs text-slate-500">Explicit stage env vars still override this runtime profile.</p>
+        {usageStatus ? (
+          <div className="mt-3 rounded-md border border-slate-200 bg-white/70 p-3 text-xs text-slate-600">
+            <p className="font-bold uppercase text-slate-500">Usage guard</p>
+            <p className="mt-1">Today ${usageStatus.dailySpendUsd.toFixed(4)}{usageStatus.dailyLimitUsd !== undefined ? ` / $${usageStatus.dailyLimitUsd.toFixed(2)}` : ""}</p>
+            <p>Month ${usageStatus.monthlySpendUsd.toFixed(4)}{usageStatus.monthlyLimitUsd !== undefined ? ` / $${usageStatus.monthlyLimitUsd.toFixed(2)}` : ""}</p>
+            {usageStatus.blocked ? <p className="mt-1 font-bold text-dusk">{usageStatus.reason}</p> : null}
+          </div>
+        ) : null}
       </label>
       {health.authRequired ? (
         <button className="btn mt-4 w-full" onClick={() => { setToken(null); setAuthed(false); }}>
@@ -364,6 +380,7 @@ export default function App() {
               workflowResult={workflowResult}
               posts={posts}
               draftPostId={draftPostId}
+              lastGenerationId={lastGenerationId}
               busy={busy}
               pipelineReady={pipelineReady}
               onFrame={() => runStep("Framing", () => api.frame(brief), (res) => {
@@ -375,12 +392,19 @@ export default function App() {
               onDraft={() => runStep("Drafting", () => {
                 setDraft("");
                 return api.streamGenerate("draft", { brief, frame, topK: 3 }, (token) => setDraft((prev) => prev + token));
-              }, (res) => {
+              }, async (res) => {
                 setDraft(res.content);
                 setRetrieved(res.retrieved ?? []);
                 setCitations(res.citations);
                 setLastGenerationId(res.generationId);
                 setQualityReport(null);
+                await api.activationEvent({
+                  type: "first_draft_completed",
+                  draftPostId,
+                  generationId: res.generationId,
+                  metadata: { topic: brief.topic, hasRawNotes: Boolean(brief.rawNotes.trim()) }
+                }).catch(() => undefined);
+                await refresh();
               })}
               onRunWorkflow={(workflowId) => runStep("Running workflow", () => api.runWorkflow(workflowId, brief, 3, draftPostId), async (result) => {
                 setWorkflowResult(result);
@@ -426,9 +450,21 @@ export default function App() {
                       socialBlurb: seo.socialBlurb
                     }
                   : undefined
-              }), async () => {
+              }), async (post) => {
+                await api.activationEvent({
+                  type: "piece_saved",
+                  draftPostId: post.id,
+                  generationId: lastGenerationId,
+                  metadata: { status: post.status, wordCount: post.wordCount }
+                }).catch(() => undefined);
                 await refresh();
                 setTab("library");
+              })}
+              onActivation={(type, metadata) => {
+                if (type === "entered_create" || type === "first_notes_submitted") trackActivation(type, metadata);
+              }}
+              onFeedback={(input) => runStep("Saving feedback", () => api.partnerFeedback(input), async () => {
+                await refresh();
               })}
               onCopy={() => navigator.clipboard.writeText(finalForPackage)}
               onLoadDoctrine={() => runStep("Loading doctrine", () => api.loadRefinerDoctrine(), async () => refresh())}
@@ -645,6 +681,7 @@ function ComposeView(props: {
   busy: string;
   pipelineReady: boolean;
   draftPostId?: string;
+  lastGenerationId?: string;
   onFrame: () => void;
   onDraft: () => void;
   onSharpen: () => void;
@@ -664,6 +701,8 @@ function ComposeView(props: {
   onRewrite: () => void;
   onUseSeed: (seed: BriefSeed) => void;
   onRunWorkflow: (workflowId: string) => void;
+  onActivation: (type: "entered_create" | "first_notes_submitted", metadata?: Record<string, unknown>) => void;
+  onFeedback: (input: { draftPostId?: string; generationId?: string; voiceMatch: number; editEffort: "light" | "moderate" | "heavy" | "rewrite"; repeatIntent: boolean; notes: string }) => Promise<void>;
 }) {
   const b = props.brief;
   const update = (key: keyof BriefInput, value: string) => props.setBrief({ ...b, [key]: value });
@@ -674,10 +713,17 @@ function ComposeView(props: {
   const [move, setMove] = useState<MoveKey | null>(null);
   const [showDetail, setShowDetail] = useState(false);
   const [draftRevealed, setDraftRevealed] = useState(Boolean(props.draft));
+  const [enteredLogged, setEnteredLogged] = useState(false);
 
   useEffect(() => {
     if (props.draft && !draftRevealed) setDraftRevealed(true);
   }, [props.draft, draftRevealed]);
+
+  useEffect(() => {
+    if (enteredLogged) return;
+    setEnteredLogged(true);
+    props.onActivation("entered_create", { source: "compose" });
+  }, [enteredLogged, props]);
 
   const STEPS: { key: Step; label: string }[] = [
     { key: "bring", label: "Bring" },
@@ -701,10 +747,10 @@ function ComposeView(props: {
         {STEPS.map((s, i) => (
           <div key={s.key} className="flex items-center">
             <button onClick={() => setStep(s.key)} className="flex items-center gap-2">
-              <span className={`grid h-8 w-8 place-items-center rounded-full text-sm font-bold transition ${step === s.key ? "bg-ink text-white" : "border border-slate-200 bg-white text-slate-400"}`}>{i + 1}</span>
-              <span className={`hidden text-sm font-bold sm:block ${step === s.key ? "text-ink" : "text-slate-400"}`}>{s.label}</span>
+              <span className={`grid h-7 w-7 place-items-center rounded-full text-xs font-bold transition sm:h-8 sm:w-8 sm:text-sm ${step === s.key ? "bg-ink text-white" : "border border-slate-200 bg-white text-slate-400"}`}>{i + 1}</span>
+              <span className={`text-[11px] font-bold sm:text-sm ${step === s.key ? "text-ink" : "text-slate-400"}`}>{s.label}</span>
             </button>
-            {i < STEPS.length - 1 ? <span className="mx-3 h-px w-6 bg-slate-200 sm:w-10" /> : null}
+            {i < STEPS.length - 1 ? <span className="mx-1.5 h-px w-3 bg-slate-200 sm:mx-3 sm:w-10" /> : null}
           </div>
         ))}
       </div>
@@ -755,7 +801,7 @@ function ComposeView(props: {
               </div>
             ) : null}
             <div className="mt-6 flex flex-wrap items-center gap-3">
-              <button className="btn" disabled={!props.pipelineReady || Boolean(props.busy)} onClick={() => { props.onDraft(); setStep("draft"); }}>
+              <button className="btn" disabled={!props.pipelineReady || Boolean(props.busy)} onClick={() => { props.onActivation("first_notes_submitted", { hasRawNotes: Boolean(b.rawNotes.trim()), hasTopic: Boolean(b.topic.trim()) }); props.onDraft(); setStep("draft"); }}>
                 <Wand2 size={16} /> Shape it
               </button>
               <button className="text-sm font-bold text-slate-500 disabled:text-slate-300" disabled={!props.pipelineReady || Boolean(props.busy)} onClick={props.onFrame}>
@@ -763,7 +809,7 @@ function ComposeView(props: {
               </button>
               {props.busy ? <span className="text-sm text-slate-400">{props.busy}…</span> : null}
             </div>
-            {!props.pipelineReady ? <p className="mt-2 text-sm text-ember">{brandCopy.disabledBegin}</p> : null}
+            {!props.pipelineReady ? <p className="mt-2 text-sm font-bold text-dusk">{brandCopy.disabledBegin}</p> : null}
             {props.frame ? <div className="mt-4"><StageCard title="Outline" value={props.frame} setValue={props.setFrame} /></div> : null}
           </div>
 
@@ -915,8 +961,89 @@ function ComposeView(props: {
           <PackageSummary seo={props.seo} image={props.image} />
           <VisualStoryGallery cover={props.image} sections={props.sectionImages} />
           <RepurposePanel pack={props.repurpose} />
+          <PartnerFeedbackPanel
+            ready={Boolean(working)}
+            busy={props.busy}
+            draftPostId={props.draftPostId}
+            generationId={props.lastGenerationId}
+            onSubmit={props.onFeedback}
+          />
         </div>
       )}
+    </div>
+  );
+}
+
+function PartnerFeedbackPanel({
+  ready,
+  busy,
+  draftPostId,
+  generationId,
+  onSubmit
+}: {
+  ready: boolean;
+  busy: string;
+  draftPostId?: string;
+  generationId?: string;
+  onSubmit: (input: { draftPostId?: string; generationId?: string; voiceMatch: number; editEffort: "light" | "moderate" | "heavy" | "rewrite"; repeatIntent: boolean; notes: string }) => Promise<void>;
+}) {
+  const [voiceMatch, setVoiceMatch] = useState(4);
+  const [editEffort, setEditEffort] = useState<"light" | "moderate" | "heavy" | "rewrite">("light");
+  const [repeatIntent, setRepeatIntent] = useState(true);
+  const [notes, setNotes] = useState("");
+  const [submitted, setSubmitted] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
+
+  return (
+    <div className="panel-instrument">
+      <h3 className="font-display text-lg font-bold">Tell the mirror what it got right.</h3>
+      <p className="mt-1 text-sm text-slate-500">A quick design-partner check: voice match, edit effort, and whether this earns another session.</p>
+      <div className="mt-4 grid gap-3 md:grid-cols-3">
+        <label>
+          <span className="label">Sounded like you?</span>
+          <select className="input" value={voiceMatch} onChange={(event) => setVoiceMatch(Number(event.target.value))}>
+            {[5, 4, 3, 2, 1].map((value) => <option key={value} value={value}>{value}/5</option>)}
+          </select>
+        </label>
+        <label>
+          <span className="label">Editing needed</span>
+          <select className="input" value={editEffort} onChange={(event) => setEditEffort(event.target.value as typeof editEffort)}>
+            <option value="light">Light</option>
+            <option value="moderate">Moderate</option>
+            <option value="heavy">Heavy</option>
+            <option value="rewrite">Full rewrite</option>
+          </select>
+        </label>
+        <label>
+          <span className="label">Use again?</span>
+          <select className="input" value={repeatIntent ? "yes" : "no"} onChange={(event) => setRepeatIntent(event.target.value === "yes")}>
+            <option value="yes">Yes</option>
+            <option value="no">Not yet</option>
+          </select>
+        </label>
+      </div>
+      <label className="mt-3 block">
+        <span className="label">What felt off or alive?</span>
+        <textarea className="input min-h-24" value={notes} onChange={(event) => setNotes(event.target.value)} placeholder="One sentence is enough." />
+      </label>
+      <div className="mt-3 flex flex-wrap items-center gap-3">
+        <ActionButton
+          icon={<Sparkles size={16} />}
+          disabled={!ready || Boolean(busy) || submitting}
+          onClick={async () => {
+            setSubmitting(true);
+            try {
+              await onSubmit({ draftPostId, generationId, voiceMatch, editEffort, repeatIntent, notes });
+              setSubmitted(true);
+            } finally {
+              setSubmitting(false);
+            }
+          }}
+        >
+          {submitting ? "Saving..." : "Send feedback"}
+        </ActionButton>
+        {submitted ? <span className="text-sm font-bold text-dusk">Feedback saved.</span> : null}
+      </div>
     </div>
   );
 }
@@ -2035,9 +2162,12 @@ function HistoryView({ generations }: { generations: GenerationRecord[] }) {
                   <p className="mt-1 text-xs text-slate-500">
                     {generation.usage.totalTokens ?? 0} tok
                     {generation.usage.cost !== undefined ? ` · $${generation.usage.cost.toFixed(4)}` : ""}
+                    {generation.usage.latencyMs !== undefined ? ` · ${(generation.usage.latencyMs / 1000).toFixed(1)}s` : ""}
                   </p>
                 ) : null}
-                <p className="mt-1 text-xs text-slate-400">fallback: provider-routed</p>
+                <p className="mt-1 text-xs text-slate-400">
+                  {generation.usage?.fallbackModel ? `fell back to ${generation.usage.fallbackModel}` : "fallback: provider-routed"}
+                </p>
               </div>
             </div>
             <p className="mt-3 line-clamp-3 whitespace-pre-line text-sm leading-6 text-slate-700">{generation.content}</p>
@@ -2671,7 +2801,83 @@ function labelFromKey(key: string) {
   return key.replace(/([A-Z])/g, " $1").replace(/^./, (letter) => letter.toUpperCase());
 }
 
-function AuthScreen({ onAuthed }: { onAuthed: () => void }) {
+// The public door: a small brand landing for logged-out visitors — the promise,
+// one path to request an invite (waitlist), and a quiet "Have an invite?" door
+// into the existing AuthScreen. Invite-only stays intact; strangers get a
+// surface that teaches the promise instead of a bare login form.
+function LandingScreen({ onAuthed }: { onAuthed: () => void }) {
+  const [showAuth, setShowAuth] = useState(false);
+  const [email, setEmail] = useState("");
+  const [joined, setJoined] = useState(false);
+  const [error, setError] = useState("");
+  const [busy, setBusy] = useState(false);
+
+  if (showAuth) return <AuthScreen onAuthed={onAuthed} onBack={() => setShowAuth(false)} />;
+
+  const requestInvite = async () => {
+    setBusy(true);
+    setError("");
+    try {
+      await api.joinWaitlist(email.trim());
+      setJoined(true);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Something went wrong — try again.");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <main className="min-h-screen bg-paper text-ink">
+      <div className="mx-auto flex min-h-screen w-full max-w-2xl flex-col justify-center px-6 py-12 text-center">
+        <div className="mx-auto"><CoCreateMark className="h-16 w-16" /></div>
+        <h1 className="mt-6 font-display text-4xl font-bold leading-tight sm:text-5xl">
+          It doesn't write <span className="text-tide">for</span> you.<br />It writes <span className="text-tide">as</span> you.
+        </h1>
+        <p className="mx-auto mt-4 max-w-lg text-lg text-slate-600">
+          Bring the unfinished self — the half-thoughts, the contradictions. Leave with transformed work that still sounds like you.
+        </p>
+        <p className="mx-auto mt-2 max-w-lg text-sm text-slate-500">
+          Co-Create is a voice engine for writers whose published body of work is the product. Invite-only while we shape it with our first writers.
+        </p>
+
+        <div className="mx-auto mt-8 w-full max-w-md">
+          {joined ? (
+            <div className="desk-panel">
+              <p className="font-display text-lg font-bold">You're on the list.</p>
+              <p className="mt-1 text-sm text-slate-500">We invite a few writers at a time. You'll hear from us — bring something unfinished.</p>
+            </div>
+          ) : (
+            <div className="desk-panel text-left">
+              <span className="label">Request an invite</span>
+              <div className="mt-2 flex gap-2">
+                <input
+                  className="input"
+                  type="email"
+                  value={email}
+                  placeholder="you@yourwriting.com"
+                  onChange={(event) => setEmail(event.target.value)}
+                  onKeyDown={(event) => { if (event.key === "Enter" && email.trim()) void requestInvite(); }}
+                />
+                <button className="btn whitespace-nowrap" disabled={!email.trim() || busy} onClick={requestInvite}>
+                  {busy ? "…" : "Request"}
+                </button>
+              </div>
+              {error ? <p className="mt-2 text-xs text-red-700">{error}</p> : null}
+            </div>
+          )}
+          <button className="mt-4 text-sm font-bold text-slate-500 underline-offset-4 hover:text-ink hover:underline" onClick={() => setShowAuth(true)}>
+            Have an invite? Sign in
+          </button>
+        </div>
+
+        <p className="mt-10 text-xs text-slate-400">Messy is welcome here.</p>
+      </div>
+    </main>
+  );
+}
+
+function AuthScreen({ onAuthed, onBack }: { onAuthed: () => void; onBack?: () => void }) {
   const [mode, setMode] = useState<"login" | "register">("login");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -2715,6 +2921,11 @@ function AuthScreen({ onAuthed }: { onAuthed: () => void }) {
         <button className="mt-3 w-full text-center text-sm text-tide" onClick={() => { setMode(mode === "login" ? "register" : "login"); setError(""); }}>
           {mode === "login" ? "Need an account? Register" : "Have an account? Sign in"}
         </button>
+        {onBack ? (
+          <button className="mt-2 w-full text-center text-xs text-slate-400 hover:text-ink" onClick={onBack}>
+            ← Back
+          </button>
+        ) : null}
       </div>
     </main>
   );

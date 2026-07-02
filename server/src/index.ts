@@ -15,6 +15,11 @@ async function main() {
   const repo = new Repository(db);
   await repo.seedDefaults();
 
+  // Durable model profile: a Labs switch persisted in kv wins over the env
+  // default, so restarts/redeploys keep the operator's last choice.
+  const savedProfile = await repo.getModelProfileSetting();
+  if (savedProfile) process.env.MODEL_PROFILE = savedProfile;
+
   app.use(cors());
   app.use(express.json({ limit: "8mb" }));
 

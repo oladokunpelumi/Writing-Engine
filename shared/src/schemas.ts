@@ -267,7 +267,9 @@ export const UsageSchema = z.object({
   promptTokens: z.number().optional(),
   completionTokens: z.number().optional(),
   totalTokens: z.number().optional(),
-  cost: z.number().optional()
+  cost: z.number().optional(),
+  latencyMs: z.number().optional(),
+  fallbackModel: z.string().optional()
 });
 
 export const GenerationResponseSchema = z.object({
@@ -527,6 +529,91 @@ export const GenerationRecordSchema = z.object({
   createdAt: isoDate
 });
 
+export const UsageLimitSchema = z.object({
+  ownerId: z.string(),
+  dailyLimitUsd: z.number().nonnegative().optional(),
+  monthlyLimitUsd: z.number().nonnegative().optional(),
+  disabled: z.boolean().default(false),
+  createdAt: isoDate,
+  updatedAt: isoDate
+});
+
+export const UsageStatusSchema = z.object({
+  ownerId: z.string(),
+  provider: z.enum(["mock", "openrouter"]),
+  dailySpendUsd: z.number(),
+  monthlySpendUsd: z.number(),
+  dailyLimitUsd: z.number().nonnegative().optional(),
+  monthlyLimitUsd: z.number().nonnegative().optional(),
+  disabled: z.boolean(),
+  blocked: z.boolean(),
+  reason: z.string().optional()
+});
+
+export const ActivationEventTypeSchema = z.enum([
+  "entered_create",
+  "first_notes_submitted",
+  "first_draft_completed",
+  "piece_saved",
+  "feedback_submitted"
+]);
+
+export const ActivationEventSchema = z.object({
+  id: z.string(),
+  ownerId: z.string(),
+  type: ActivationEventTypeSchema,
+  draftPostId: z.string().optional(),
+  generationId: z.string().optional(),
+  metadata: z.record(z.unknown()).default({}),
+  createdAt: isoDate
+});
+
+export const ActivationEventInputSchema = z.object({
+  type: ActivationEventTypeSchema,
+  draftPostId: z.string().optional(),
+  generationId: z.string().optional(),
+  metadata: z.record(z.unknown()).default({})
+});
+
+export const PartnerFeedbackSchema = z.object({
+  id: z.string(),
+  ownerId: z.string(),
+  draftPostId: z.string().optional(),
+  generationId: z.string().optional(),
+  voiceMatch: z.number().int().min(1).max(5),
+  editEffort: z.enum(["light", "moderate", "heavy", "rewrite"]),
+  repeatIntent: z.boolean(),
+  notes: z.string().default(""),
+  createdAt: isoDate
+});
+
+export const PartnerFeedbackInputSchema = z.object({
+  draftPostId: z.string().optional(),
+  generationId: z.string().optional(),
+  voiceMatch: z.number().int().min(1).max(5),
+  editEffort: z.enum(["light", "moderate", "heavy", "rewrite"]),
+  repeatIntent: z.boolean(),
+  notes: z.string().max(2000).default("")
+});
+
+export const AdminReadinessSchema = z.object({
+  authRequired: z.boolean(),
+  inviteConfigured: z.boolean(),
+  databaseConfigured: z.boolean(),
+  openRouterConfigured: z.boolean(),
+  modelProfile: z.enum(["cost-first", "balanced", "premium"]),
+  modelOverrides: z.record(z.string()),
+  ownerDefaultCounts: z.record(z.number()),
+  userCount: z.number(),
+  recentSpendUsd: z.object({
+    today: z.number(),
+    month: z.number(),
+    allTime: z.number()
+  }),
+  feedbackCount: z.number(),
+  waitlistCount: z.number()
+});
+
 export const CorpusSourceSchema = z.object({
   id: z.string(),
   path: z.string(),
@@ -767,6 +854,14 @@ export type DesireReport = z.infer<typeof DesireReportSchema>;
 export type DesirePassResponse = z.infer<typeof DesirePassResponseSchema>;
 export type OutputRevision = z.infer<typeof OutputRevisionSchema>;
 export type GenerationRecord = z.infer<typeof GenerationRecordSchema>;
+export type UsageLimit = z.infer<typeof UsageLimitSchema>;
+export type UsageStatus = z.infer<typeof UsageStatusSchema>;
+export type ActivationEventType = z.infer<typeof ActivationEventTypeSchema>;
+export type ActivationEvent = z.infer<typeof ActivationEventSchema>;
+export type ActivationEventInput = z.input<typeof ActivationEventInputSchema>;
+export type PartnerFeedback = z.infer<typeof PartnerFeedbackSchema>;
+export type PartnerFeedbackInput = z.input<typeof PartnerFeedbackInputSchema>;
+export type AdminReadiness = z.infer<typeof AdminReadinessSchema>;
 export type CorpusSegmentType = z.infer<typeof CorpusSegmentTypeSchema>;
 export type CorpusMemoryRole = z.infer<typeof CorpusMemoryRoleSchema>;
 export type CorpusSource = z.infer<typeof CorpusSourceSchema>;

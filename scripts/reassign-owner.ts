@@ -11,7 +11,8 @@ import { openDatabase } from "../server/src/db";
 const OWNED_TABLES = [
   "posts", "topic_ideas", "seo_packages", "image_assets", "schedule_entries",
   "generation_records", "voice_distillations", "corpus_sources", "corpus_segments",
-  "brief_seeds", "repurpose_packages", "voice_profiles", "shows", "experiments", "territories"
+  "brief_seeds", "repurpose_packages", "voice_profiles", "shows", "experiments", "territories",
+  "usage_limits", "activation_events", "partner_feedback"
 ];
 
 async function main() {
@@ -30,16 +31,25 @@ async function main() {
 
   console.log(`Reassigning content: ${oldOwner} → ${newOwner}`);
   for (const table of OWNED_TABLES) {
-    const rows = await db.prepare(`UPDATE ${table} SET owner_id = ? WHERE owner_id = ? RETURNING id`).all(newOwner, oldOwner);
+    // RETURNING owner_id (not id): every owned table has owner_id by definition,
+    // but some (e.g. usage_limits, keyed by owner) have no id column.
+    const rows = await db.prepare(`UPDATE ${table} SET owner_id = ? WHERE owner_id = ? RETURNING owner_id`).all(newOwner, oldOwner);
     console.log(`  ${table}: ${rows.length}`);
   }
 
   // Owner-namespaced kv keys (activeVoiceId:<owner>, activeShowId:<owner>,
-  // gridBible:<owner>, gridStoryLog:<owner>) — rewrite the suffix.
-  const kv = await db
-    .prepare("UPDATE kv SET key = regexp_replace(key, ':' || ? || '$', ':' || ?) WHERE key LIKE ? RETURNING key")
-    .all(oldOwner, newOwner, `%:${oldOwner}`);
-  console.log(`  kv keys: ${kv.length}`);
+  // gridBible:<owner>, gridStoryLog:<owner>) — rewrite the suffix. The new owner
+  // may already have auto-created rows (registering seeds an active voice/show),
+  // so upsert with the MIGRATED value winning, then remove the old-owner row.
+  const kvRows = await db.prepare("SELECT key, value FROM kv WHERE key LIKE ?").all<{ key: string; value: string }>(`%:${oldOwner}`);
+  for (const row of kvRows) {
+    const newKey = row.key.slice(0, -oldOwner.length) + newOwner;
+    await db
+      .prepare("INSERT INTO kv (key, value) VALUES (?, ?) ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value")
+      .run(newKey, row.value);
+    await db.prepare("DELETE FROM kv WHERE key = ?").run(row.key);
+  }
+  console.log(`  kv keys: ${kvRows.length}`);
 
   console.log("Done.");
   process.exit(0);

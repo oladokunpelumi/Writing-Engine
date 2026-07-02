@@ -1,139 +1,62 @@
-# Co-Create Brand System
+# Co-Create Brand System - Live V2 Re-Audit
 
-Date: 2026-06-29
-Rendered identity: `docs/brand/brand-system.html` · Marks: `docs/brand/logo-*.svg`, `docs/brand/favicon.svg`
+Date: 2026-07-01
+Rendered identity: `docs/brand/brand-system.html`
 
-## Brand Position
+## Executive Read
 
-Co-Create is a **grounded mythic writing engine** for people who refuse to sound generic. You bring rough, unfinished, even contradictory inner material; it finds the living through-line and reflects back a shaped piece that still belongs to you.
+The brand system is no longer only a document. Production now ships the Co-Create name, mark, favicon, meta description, and OG asset; the local mock app carries the "messy is welcome", "written as you", and "Still yours. Now shaped." language through the core path.
 
-> The writing engine that meets you in the unfinished.
+The public-launch blocker is not the identity itself. At audit time, the largest distribution hygiene issue was a relative OG image; Design-Partner Readiness P0 changed `client/index.html` to the absolute production URL. Naming/search/trademark review is still open, and there is no public landing/waitlist surface for the brand promise outside the app and README.
 
-## Core Promise
+Implementation follow-up, 2026-07-01: `docs/brand/brand-system.html` now states the ember contrast rule and avoids normal-size ember text in small labels.
 
-**Bring the unfinished self. Leave with transformed work that still sounds like you.**
+## Acceptance-Criteria Scorecard
 
-Supporting lines:
+| Criterion | Status | Evidence |
+| --- | --- | --- |
+| Product title is Co-Create | Met | Production root HTML contains `<title>Co-Create</title>`. |
+| Meta description exists | Met | Production root HTML contains "Bring the unfinished self. Leave with transformed work that still sounds like you." |
+| Bespoke mark is live | Met | `/favicon.svg` returns the custom mark; production screenshot shows it on login. |
+| OG image exists | Met | `/og-image.svg` returns `200`; `client/index.html` references it with the absolute production URL. |
+| Core promise appears in product | Met | Local screenshots show "Lay down what you have", "written as you", and "Still yours. Now shaped." |
+| Brand artifact exists | Met | `docs/brand/brand-system.html` exists and uses the same tokens/mark family. |
+| Naming/search/trademark review complete | Unverified | No legal/search artifact exists in repo; this remains P1 before public launch. |
+| Do-not-copy sweep complete | Partly met | Core path screenshots pass; full production bundle was not exhaustively audited because browser-harness attach was blocked. |
 
-- It doesn't write *for* you. It writes *as* you.
-- Messy is welcome here.
-- Lay down the fragments — the repressed, the opposite, the contradiction. You'll be met.
-- Still yours. Now shaped.
+## Evidence Table
 
-## Role & internal doctrine
+| Evidence | Result |
+| --- | --- |
+| Production root HTML | Title, description, OG title/description/type/image, favicon link. |
+| Production JS bundle | Contains Co-Create, mock/local profile UI, Voice mirror, and core path copy; no obvious visible "Gbedu Desk" in fetched bundle excerpt. |
+| Screenshots | Production auth shell plus local mock journey saved in `docs/audit-assets/`. |
+| Source assets | `client/public/favicon.svg`, `client/public/og-image.svg`, `docs/brand/logo-mark.svg`, `docs/brand/logo-horizontal.svg`. |
+| Contrast | Ember fails normal text contrast; dusk/ink/tide pass on paper. |
 
-Co-Create is a **partner, not a replacement; a mirror, not a mask; an engine, not a ghostwriter; a wand, not a shortcut; a chamber, not a dashboard.**
+## Live Findings
 
-The internal design doctrine (the "why" behind every decision — not public UI copy):
+- **P0 closed in Design-Partner Readiness: absolute OG URL.** Verify on the deployed HTML after release.
+- **P0 closed in Design-Partner Readiness: contrast usage rule.** Ember is a brand accent, not a body text color at current values.
+- **P1: naming/search review.** "Co-Create" is strategically right but generic; public launch needs trademark/search confidence and a canonical URL strategy.
+- **P1: no public brand surface.** The app is invite-only, which is correct, but there is no waitlist or public page that teaches the promise.
 
-- **One and separate.** You and Co-Create are a single creative field, yet authorship always returns to you. This is the *trinity* idea from the founding vision — you, the engine, and the new self that emerges in the work; three that are one. It informs the mark (two strokes, one form), the reveal (the piece arrives as *yours*), and the voice ("still yours").
-- **Meet the whole self.** The engine receives the repressed, the opposite, the contradictory without judgement, and returns coherence — so the product must *receive before it processes*.
-- **Elevation, not replacement.** The writer leaves more themselves, not less.
-
-Public language uses: *partner, mirror, engine, threshold, shape, voice, through-line, meet, reflect.* Keep overt "trinity/spiritual" wording **out of the product surface** — it is potent doctrine, too loaded for general UI.
-
-## Naming
-
-Keep **Co-Create**. It names collaboration directly, avoids "AI writer/ghostwriter," fits one-and-separate creation, and stretches across Essays, The Grid, visual story, and future engines. Risks: generic for SEO/trademark; the hyphen invites URL/search drift; it needs a sharp tagline. Mitigation: pair with *"The writing engine that meets you in the unfinished,"* and use the sub-language — **Create = the chamber · Voice = the mirror · Library = the body of work · Labs = advanced instruments.** Reserve (don't switch without a legal/search blocker): Mirror Engine, The Through-Line, The Chamber, The Co-Creator.
-
-## Voice & tone
-
-Intimate · clear · elevated · human · brave but not grandiose · magical without being vague.
-
-**Do:** "Bring the rough version." · "Let the piece meet you back." · "Shape this into something that still sounds like you." · "Open with recognition." · "Give the section a want."
-
-**Do not:** "Optimize your content pipeline." · "Generate high-converting assets." · "Unlock infinite productivity." · "Let AI do it for you." · "Transcend your human limitations."
-
-## UI copy library (by surface)
-
-- **Onboarding:** "Start with what you have." · "Teach it your voice." · "Messy is welcome here."
-- **Bring:** "Lay down the fragments." · "A thought, a voice note, a contradiction, a sentence you can't stop thinking about." · Primary: **"Shape it."**
-- **Draft:** "A first form, written in your cadence." · "Edit freely. It's yours."
-- **Polish (grouped):** "Choose a move." → *Shape:* "Tighten," "Meet the reader." *Reflect:* "Open a mirror," "Give it want." *Dress:* "Make it visible." *Check:* "Clear the static."
-- **Done:** "Still yours. Now shaped." · "Save the piece." · "Release it."
-- **Errors:** "The model returned no visible draft. Try again or switch to the stable route." · "This route is taking too long — Co-Create can fall back to the reliable path."
-
----
-
-## Visual identity
-
-### The mark
-
-A single symbol carrying **"one and separate":** two strokes — the writer's and the engine's — that begin apart and converge into one form, leaving a small threshold/opening between them (the space where the new self appears). It reads simultaneously as **two strokes becoming one**, a **doorway/threshold**, and the negative-space suggestion of a **C**.
-
-- **Construction:** two weighted strokes (ink) angled toward a shared apex; a thin ember seam where they meet (the moment of becoming). Geometric, confident, not literal (no pen, no robot, no sparkles).
-- **Lockups:** mark + "Co-Create" wordmark (Syne 700) horizontal for the sidebar; mark-only square for favicon/app icon/OG.
-- **Clear space** = the stroke width on all sides. **Min size** 24px (mark-only).
-- **Don't:** drop it in a hard ink square (the current PenLine-in-a-box), add gradients/orbs, or outline it.
-
-Files: `docs/brand/logo-horizontal.svg`, `docs/brand/logo-mark.svg`, `docs/brand/favicon.svg`.
-
-### Color
-
-The palette is built from the brand's three felt states. Hex + role + usage:
-
-| Token | Hex | Role | Usage |
-| --- | --- | --- | --- |
-| **Ink** | `#111827` | Authorship | Primary text, the mark, primary buttons. The writer's hand. |
-| **Paper** | `#F5F1E8` | The field | App background. Warm, receptive, unhurried. (Not pure white.) |
-| **Tide** | `#0E7490` | Intelligence / clarity | Accent, focus rings, links, the engine's presence. Used sparingly. |
-| **Ember** | `#C26B2C` | Transformation / becoming | The draft reveal, the "written as you" badge, the moment of shaping. The wand's warmth. |
-| **Ember wash** | `#F3E3CE` | Transformation, soft | Background of the reveal/becoming surfaces. |
-| **Dusk** | `#6E5B92` | Reflection | The mirror — Voice, the Polish "Reflect" moves. The engine looking back at you. |
-| **Dusk wash** | `#ECE7F2` | Reflection, soft | Recessive backgrounds for reflective surfaces. |
-| **Slate 400–700** | — | Structure | Secondary text, borders, disabled. Quiet, never the star. |
-
-Rules: **one accent per surface.** Paper is the room; Ink is the writer; Tide/Ember/Dusk each map to one meaning and never decorate. (`brass #b7791f` from the current build is retired into the Ember family.)
-
-**Avoid:** gradient-orb decoration · purple-blue SaaS sameness · beige-only flatness · mystical clutter · feature copy as decoration.
-
-### Typography
-
-- **Display — Syne** (600/700): headlines, the wordmark, step titles. Distinctive, architectural — "engine," not "doc."
-- **Body — DM Sans** (400/500/700): everything else. Warm, highly readable, optical sizing 9–40.
-- **Scale (rem):** 3.0 / 2.25 / 1.5 / 1.25 (Syne) · 1.0 body / 0.875 small / 0.75 label-caps (DM Sans). Body line-height generous (1.6–1.75) — text should breathe.
-- Labels: DM Sans 700, uppercase, tracked, slate-500 (current `.label` is correct).
-
-### Motion language
-
-Three named, reduced-motion-safe transitions (each has a static fallback):
-
-- **Enter** — crossing the threshold (entering Create / a new step): a brief settle-up + fade, ~250ms.
-- **Become** — the draft reveal: the piece rises and an ember wash blooms then recedes, badge fades in, ~600ms. The signature moment.
-- **Settle** — Done: a calm downward settle, no confetti, ~200ms.
-
-Principle: motion marks *transformation and threshold only* — never idle decoration.
-
-### Iconography
-
-Keep Lucide (consistent, clean) for utility, but the **brand mark is bespoke**. Polish moves may get four intent glyphs (Shape / Reflect / Dress / Check) drawn in the mark's stroke language for cohesion.
-
-### Favicon & social
-
-Ship the mark-only SVG as favicon (currently none → browser default). One OG/social image: the mark + "It doesn't write for you. It writes as you." on Paper, for shared links.
-
-## Roadmap
+## Next Quality Bar
 
 **P0**
-- Adopt the mark (sidebar + favicon + OG); retire the PenLine-in-a-box.
-- Add `ember` + `dusk` (+ washes) to the token system; bind each to its one state.
-- Rename/group the Polish moves with grounded-mythic verbs (Shape/Reflect/Dress/Check).
-- Strip any do-not-list copy from the core path.
+- Verify absolute `og:image` with a social-card debugger after deploy.
+- Keep the brand artifact's contrast note current as new token usages are added.
 
 **P1**
-- Ship the rendered brand system (`docs/brand/brand-system.html`) as the living reference; add a brand token file the client imports.
-- The "Become" reveal motion; mobile "entering the engine" first impression.
-- Voice screen as a mirror (reflected portrait before fields).
+- Complete naming/search/trademark review.
+- Ship a minimal public waitlist/landing surface only after design-partner P0s are closed.
 
 **P2**
-- Naming/search/trademark review.
-- Full icon set in the mark's stroke language; image-prompt house style tied to the palette.
-- Test 3 taglines with target writers.
+- Expand the icon system only if repeated UI surfaces need it; do not add decorative mystic clutter.
 
-## Acceptance criteria
+## Acceptance Criteria V2
 
-- The bespoke mark appears in-app, as favicon, and in the OG image; the stock PenLine box is gone.
-- `ember` and `dusk` exist as tokens, each used for exactly one meaning (transformation / reflection), with restraint.
-- Every core-path string passes the voice do/do-not test; move names are relationship verbs.
-- `docs/brand/brand-system.html` renders standalone and matches this doc's hex, type, and mark exactly.
-- A new contributor can theme a component correctly from this doc alone (tokens + rules are unambiguous).
+- A shared production URL displays the intended title, description, and image card.
+- The brand system includes contrast-safe usage rules for every token.
+- A public-launch reviewer can find a naming/search decision record.
+- The product, README, and future landing page use one consistent wedge: "It doesn't write for you. It writes as you."

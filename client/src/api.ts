@@ -1,4 +1,5 @@
 import type {
+  ActivationEventInput,
   BriefSeed,
   BriefInput,
   CorpusClassificationInput,
@@ -17,6 +18,8 @@ import type {
   ImageAsset,
   ImportBatch,
   ImportPreview,
+  PartnerFeedback,
+  PartnerFeedbackInput,
   Post,
   PostInput,
   PromptTemplate,
@@ -32,6 +35,7 @@ import type {
   ScheduleInput,
   SeoPackage,
   TopicIdea,
+  UsageStatus,
   VisualIdentity,
   VoiceDistillation,
   VoiceProfile,
@@ -71,12 +75,31 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
 
 export const api = {
   health: () => request<{ ok: boolean; aiProvider: string; vectorRetrievalEnabled: boolean; authRequired: boolean }>("/api/health"),
+  usage: () => request<UsageStatus>("/api/usage"),
+  activationEvent: (input: ActivationEventInput) =>
+    request("/api/activation/event", {
+      method: "POST",
+      headers: jsonHeaders,
+      body: JSON.stringify(input)
+    }),
+  partnerFeedback: (input: PartnerFeedbackInput) =>
+    request<PartnerFeedback>("/api/partner-feedback", {
+      method: "POST",
+      headers: jsonHeaders,
+      body: JSON.stringify(input)
+    }),
   modelProfile: () => request<{ profile: "cost-first" | "balanced" | "premium" }>("/api/model-profile"),
   setModelProfile: (profile: "cost-first" | "balanced" | "premium") =>
     request<{ profile: "cost-first" | "balanced" | "premium" }>("/api/model-profile", {
       method: "PUT",
       headers: jsonHeaders,
       body: JSON.stringify({ profile })
+    }),
+  joinWaitlist: (email: string, note?: string) =>
+    request<{ ok: boolean }>("/api/waitlist", {
+      method: "POST",
+      headers: jsonHeaders,
+      body: JSON.stringify({ email, note })
     }),
   register: (email: string, password: string, inviteCode: string) =>
     request<{ token: string; email: string }>("/api/auth/register", {

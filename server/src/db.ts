@@ -244,6 +244,43 @@ async function migrate(db: AppDatabase) {
       completion_tokens integer,
       total_tokens integer,
       cost double precision,
+      latency_ms integer,
+      fallback_model text,
+      created_at text NOT NULL
+    );
+
+    -- Additive columns for tables that predate them in existing deployments.
+    ALTER TABLE generation_records ADD COLUMN IF NOT EXISTS latency_ms integer;
+    ALTER TABLE generation_records ADD COLUMN IF NOT EXISTS fallback_model text;
+
+    CREATE TABLE IF NOT EXISTS usage_limits (
+      owner_id text PRIMARY KEY,
+      daily_limit_usd double precision,
+      monthly_limit_usd double precision,
+      disabled integer NOT NULL DEFAULT 0,
+      created_at text NOT NULL,
+      updated_at text NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS activation_events (
+      id text PRIMARY KEY,
+      owner_id text NOT NULL DEFAULT 'owner-default',
+      type text NOT NULL,
+      draft_post_id text,
+      generation_id text,
+      metadata text NOT NULL DEFAULT '{}',
+      created_at text NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS partner_feedback (
+      id text PRIMARY KEY,
+      owner_id text NOT NULL DEFAULT 'owner-default',
+      draft_post_id text,
+      generation_id text,
+      voice_match integer NOT NULL,
+      edit_effort text NOT NULL,
+      repeat_intent integer NOT NULL,
+      notes text NOT NULL DEFAULT '',
       created_at text NOT NULL
     );
 
@@ -368,6 +405,12 @@ async function migrate(db: AppDatabase) {
       name text NOT NULL,
       kind text NOT NULL,
       graph text NOT NULL DEFAULT '{"nodes":[],"edges":[]}',
+      created_at text NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS waitlist (
+      email text PRIMARY KEY,
+      note text,
       created_at text NOT NULL
     );
   `);
