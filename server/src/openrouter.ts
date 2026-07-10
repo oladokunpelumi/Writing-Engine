@@ -178,8 +178,9 @@ export function draftPrompt(
 
 export function sharpenPrompt(draft: string, promptVersion?: PromptVersion) {
   return [
-    promptVersion?.body ?? "Critique this draft against: answers the real question, usable immediately, nothing padded, clean structure. Then revise it.",
-    "Output only the Critique and the Final. Do not narrate your process or any tools you use.",
+    promptVersion?.body ??
+      "Critique this draft against: answers the real question, usable immediately, nothing padded, clean structure. Then output a line containing exactly <<<FINAL>>> and nothing else, then only the revised piece after it.",
+    "Output only the Critique, the <<<FINAL>>> marker line, and the revised piece. Do not narrate your process or any tools you use. No text after the revised piece.",
     draft
   ].join("\n\n");
 }
@@ -257,6 +258,21 @@ export async function runSharpen(
     fusion
   );
   return openrouterResponse(content, modelFor("sharpen"), promptVersion, usage);
+}
+
+// Sharpen's prompt asks for a critique followed by a revised final, so its raw
+// content is never the piece itself. Splits on the <<<FINAL>>> marker line; if a
+// custom/legacy prompt version doesn't emit the marker, the whole content is
+// treated as the final (today's pre-fix behavior) rather than silently breaking.
+const SHARPEN_FINAL_MARKER = /^\s*<{2,}\s*FINAL\s*>{2,}\s*$/im;
+
+export function splitSharpenOutput(content: string): { critique?: string; final: string } {
+  const match = content.match(SHARPEN_FINAL_MARKER);
+  if (!match || match.index === undefined) return { final: content };
+  const critique = content.slice(0, match.index).trim();
+  const final = content.slice(match.index + match[0].length).trim();
+  if (!final) return { final: content };
+  return { critique: critique || undefined, final };
 }
 
 // Turn the refinement parameters (from the article-refiner intake) into prompt
@@ -546,17 +562,21 @@ function toUsage(raw: unknown): Usage | undefined {
 }
 
 export function systemPrompt(voice: VoiceProfile) {
+  // Skip empty fields so a neutral starter voice (empty pillars/spine/lexicon)
+  // doesn't emit dangling "Pillars: " / "Spine: " / "Lexicon: " labels.
   return [
     "You are Co-Create, a single-author writing engine.",
     "Write in the author's locked voice.",
-    `Pillars: ${voice.pillars.join("; ")}`,
+    voice.pillars.length ? `Pillars: ${voice.pillars.join("; ")}` : "",
     `Register: ${voice.register}`,
-    `Spine: ${voice.spine.join(" -> ")}`,
-    `Constraints: ${voice.constraints.join("; ")}`,
-    `Banned terms: ${voice.bannedTerms.join(", ")}`,
-    `Lexicon: ${voice.lexicon.join(", ")}`,
+    voice.spine.length ? `Spine: ${voice.spine.join(" -> ")}` : "",
+    voice.constraints.length ? `Constraints: ${voice.constraints.join("; ")}` : "",
+    voice.bannedTerms.length ? `Banned terms: ${voice.bannedTerms.join(", ")}` : "",
+    voice.lexicon.length ? `Lexicon: ${voice.lexicon.join(", ")}` : "",
     guardrailPrompt()
-  ].join("\n");
+  ]
+    .filter(Boolean)
+    .join("\n");
 }
 
 // The system prompt (voice profile + guardrails) repeats across Frame -> Draft ->

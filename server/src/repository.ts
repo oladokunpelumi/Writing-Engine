@@ -41,7 +41,7 @@ import type {
   UsageLimit,
   UsageStatus
 } from "../../shared/src";
-import { DEFAULT_PROMPT_TEMPLATES, DEFAULT_VOICE_PROFILE, DEFAULT_WORKFLOW_RECIPES } from "../../shared/src";
+import { DEFAULT_PROMPT_TEMPLATES, DEFAULT_VOICE_PROFILE, DEFAULT_WORKFLOW_RECIPES, STARTER_VOICE_PROFILE } from "../../shared/src";
 import { GRID_PROMPT_TEMPLATES, GRID_RECIPE, GRID_VOICE_PROFILE } from "./gridContent";
 import type { AppDatabase } from "./db";
 import { ownerContext } from "./context";
@@ -127,10 +127,12 @@ export class Repository {
     return row?.profile ? parse<VoiceProfile>(String(row.profile), DEFAULT_VOICE_PROFILE) : undefined;
   }
 
-  // The active voice (pipeline calls this). Auto-creates a Default if the owner has none.
+  // The active voice (pipeline calls this). Auto-creates a neutral starter for a
+  // brand-new owner — never the founder's own DEFAULT_VOICE_PROFILE, which is a
+  // real, specific voice reserved for migrateLegacyVoice()'s single original owner.
   async getVoice(): Promise<VoiceProfile> {
     const voices = await this.listVoices();
-    if (voices.length === 0) return await this.createVoice("Default", DEFAULT_VOICE_PROFILE);
+    if (voices.length === 0) return await this.createVoice("Untitled voice", STARTER_VOICE_PROFILE);
     const activeId = await this.activeVoiceId();
     return voices.find((voice) => voice.id === activeId) ?? voices[0];
   }
@@ -171,6 +173,10 @@ export class Repository {
     return rows.length > 0;
   }
 
+  // Runs once at boot, scoped to the fallback owner (no request context exists yet) —
+  // i.e. only ever the founder's own pre-multi-tenant account. Intentionally keeps
+  // DEFAULT_VOICE_PROFILE (the founder's real voice) as its fallback; do not repurpose
+  // this for new-owner seeding — see getVoice()'s STARTER_VOICE_PROFILE path for that.
   private async migrateLegacyVoice() {
     const count = await this.db.prepare("SELECT COUNT(*) AS c FROM voice_profiles WHERE owner_id = ?").get(this.owner);
     if (Number(count?.c ?? 0) > 0) return;

@@ -281,7 +281,10 @@ export const GenerationResponseSchema = z.object({
   retrieved: z.array(RetrievedPostSchema).optional(),
   citations: z.array(CitationFlagSchema).default([]),
   usage: UsageSchema.optional(),
-  draftPostId: z.string().optional()
+  draftPostId: z.string().optional(),
+  // Present only for the sharpen stage: the critique split out of the raw
+  // model output so it never ends up persisted as (or titling) the piece itself.
+  critique: z.string().optional()
 });
 
 export const WorkflowStageResultSchema = z.object({
@@ -291,7 +294,8 @@ export const WorkflowStageResultSchema = z.object({
   model: z.string(),
   promptVersionId: z.string().optional(),
   generationId: z.string().optional(),
-  citations: z.array(CitationFlagSchema).default([])
+  citations: z.array(CitationFlagSchema).default([]),
+  critique: z.string().optional()
 });
 
 export const WorkflowRunResponseSchema = z.object({

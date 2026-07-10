@@ -1,130 +1,87 @@
-# Co-Create Sales & Distribution Audit
+# Co-Create Sales & Distribution Audit — Live V3 Re-Audit
 
-Date: 2026-07-01
-Status: new fifth lens for design-partner readiness and paid-launch runway
+Date: 2026-07-09
+Status: design-partner readiness re-scored with authenticated production evidence; competitor scan refreshed (all sources re-accessed 2026-07-09).
 
-Note: this document supersedes `Gbedu-Desk-Strategy.md` sections 3-4 for current GTM planning. The strategy remains the historical source; do not rewrite it as part of this audit cycle.
+Note: this document supersedes `Gbedu-Desk-Strategy.md` sections 3–4 for current GTM planning (carried from V2).
 
 ## Executive Read
 
-Co-Create's product wedge is real: a voice engine, anti-slop doctrine, craft moves, and a calm playground that says, "It doesn't write for you. It writes as you." The distribution surface is near zero. Production is invite-only, registration is gated, there is no public waitlist/landing page, and the app's best demo is still the founder's own body of published work.
+The distribution surface went from zero to real in one cycle: a public landing with the wedge, a working waitlist (`POST /api/waitlist` → 201, idempotent, live-tested), an invite door, and a first outbound motion (the Ultra Successful cold pitch, 2026-07-02 cycle). The funnel now exists end-to-end and was walked by a stranger-account without founder help.
 
-That is acceptable for design partners and dangerous for paid launch. The immediate job is not billing. It is proving that 5-15 high-output, voice-conscious writers can go from a DM invite to a first draft in one sitting, without founder hand-holding and without one user draining the shared model key.
+But the pilot itself is not safe to start this week, for three reasons this audit proved rather than suspected. (1) Every partner would draft in the *founder's* voice first (product P0) — the pilot's core question dies on contact. (2) Spend is uncapped and the effective model ladder is the expensive one: $0.093/piece measured live, any-user-flippable to Premium (model P0s). (3) The single shared invite code is now also a measured weakness — it is one common word, it appears in this repo's docs, and registration grants immediate uncapped generation. Fix the three, then invite the first five writers; the machine on the other side of the door works.
 
-## Closure update — 2026-07-02
+## Acceptance-Criteria Scorecard (scored against V2's own criteria)
 
-- **Public distribution surface: Unmet → Met.** A public landing now fronts the app for logged-out visitors (promise, "Request an invite" → `POST /api/waitlist`, "Have an invite?" sign-in door). Waitlist entries are stored idempotently and counted in `/api/admin/readiness`.
-- **Owner library migration: Unverified → Met.** `scripts/reassign-owner.ts` run against production 2026-07-02: 37 posts + all content and 4 kv keys now owned by the registered account; 0 rows left on `owner-default`.
-- **Probe users deleted** (`x@y.com`, `probe2@`, `probe3@`); only the real account remains.
-- **Onboarding script gap closed:** `docs/design-partner-guide.md` (what to bring, the session, the three questions, dry-run checklist). ToS/privacy draft at `docs/legal/terms-privacy-draft.md`; naming record template at `docs/naming-decision.md`.
-
-## Acceptance-Criteria Scorecard
-
-| Criterion | Status | Evidence |
+| V2 criterion | Status | Evidence |
 | --- | --- | --- |
-| Invite-only design-partner gate exists | Met | Production health reports `authRequired: true`; invalid invite registration returned `403 Invalid invite code`, which implies an invite code is configured. |
-| Public distribution surface exists | Unmet | Production root is the app shell/login; no public landing page or waitlist route found in repo. |
-| Product wedge is visible in-app | Met | Local screenshots show notes-first Bring, voice/authorship copy, grouped craft moves, and quiet Done state. |
-| Design-partner funnel is instrumented | Unmet | No activation dashboard or feedback loop was found for invite -> first draft -> save -> voice-match. |
-| Per-owner spend caps exist | Unmet | No quota/spend cap implementation was found. |
-| Owner library migration is resolved | Unverified | `scripts/reassign-owner.ts` exists; production DB state could not be read. |
-| Paid launch prerequisites exist | Unmet | No billing, ToS/privacy launch package, public pricing, support/status, or naming review artifact found. |
+| A stranger with an invite can reach a first draft in one sitting without founder hand-holding | Met | Live dry run 2026-07-09: register → messy note → 830-word draft, ~42s generation time, zero founder involvement. |
+| Every competitor claim has a URL and access date, or is omitted | Met | Refreshed table below; unverifiable rows say so explicitly. |
+| No paid launch until spend caps, ToS/privacy, support path, and naming review exist | Held (gate respected) | No billing shipped. But note: spend caps remain unset even for the *free* pilot — see P0. |
+| Founder can point to a published piece made with Co-Create as the demo | Unverified | Not checkable from the repo; founder attestation needed (cadence item in `docs/design-partner-guide.md`). |
 
-## Evidence Table
+## Funnel State (live-tested 2026-07-09)
 
-| Evidence | Result |
-| --- | --- |
-| Production health | `200`; OpenRouter/vector/auth enabled. |
-| Production registration probe | `403 Invalid invite code`; registration is not open. |
-| Production shell | Auth/login screen only; `live-welcome-2026-07-01.png`. |
-| Local core demo | `local-bring-2026-07-01.png`, `local-draft-2026-07-01.png`, `local-polish-2026-07-01.png`, `local-done-2026-07-01.png`. |
-| Admin facts | Railway env, owner-default rows, probe users, and password rotation remain unverified from this run. |
+| Funnel step | Status | Evidence |
+| --- | --- | --- |
+| Public landing with promise + proof slot | Met | `live-landing-desktop-2026-07-09.png`; wedge copy verbatim from this doc's positioning. |
+| Waitlist capture | Met | `POST /api/waitlist` → 201; stored idempotently; counted in `/api/admin/readiness`. |
+| Invite → register (fail-closed) | Met | Wrong code → 403; valid code → 201. |
+| Register → first draft | Met | Full pipeline live-run (see model audit table). |
+| Activation telemetry | Met | `activation_events` + `partner_feedback` recorded during the run; `scripts/design-partner-readiness.ts` reads them. |
+| Per-partner safety (caps, invite hygiene) | Unmet | No default cap env set; one shared guessable invite code; any user can flip the global model profile. |
 
-## Competitor Scan
+## Competitor Scan (refreshed; all accessed 2026-07-09)
 
-Access date for all sources: 2026-07-01.
+| Product | What it sells | Pricing evidence | Change since 2026-07-01 | Co-Create implication |
+| --- | --- | --- | --- | --- |
+| [Lex](https://lex.page/pricing) | Distraction-free AI editor bundling premium models | Pricing page shows Pro + Teams, no public numbers | None observed | Model-access is their pitch, not voice; wedge holds. |
+| [Sudowrite](https://www.sudowrite.com/pricing) | Fiction-writer AI (Muse model) | $10 / $22 / $44 monthly tiers | None observed | Still fiction-only; essayist lane open. |
+| [Jasper](https://www.jasper.ai/pricing) | Marketing AI platform | Pro $59/mo annual, $69 monthly; Business custom | Repositioned around "GEO & AI Optimization" + new agents | Moving further from solo writers — helpful drift. |
+| [Typeshare](https://typeshare.co/) | Templated social/atomic-essay tool | **Site unreachable (ECONNREFUSED, 2026-07-09)**; no pricing verifiable | Possible dormancy/shutdown | If confirmed, its creator audience is unclaimed — watch and re-check. |
+| [Copy.ai](https://www.copy.ai/prices) | GTM automation platform | Chat $29/mo ($24 annual); Growth $1k → Scale $3k/mo | None; fully exited solo-writer market | Not a competitor for this ICP anymore. |
+| [Writer](https://writer.com/) | Enterprise agentic AI | Own site blocked fetch (403); third parties list Starter ~$29/user/mo (unverified) | None verifiable | Enterprise lane; irrelevant to solo wedge. |
+| [Notion AI](https://www.notion.com/pricing) | AI inside workspace | Plus $10 / Business $20 per member/mo; agent credits $10/1k; "Workers" beta free until Aug 11, 2026 | New credit-metered background agents | Workspace context play; not a voice chamber. |
 
-| Product | What it sells | Pricing / packaging evidence | Co-Create implication |
-| --- | --- | --- | --- |
-| [Lex](https://lex.page/) | Collaborative documents with AI editing, feedback, versions, commands, title ideas, publishing, and mobile web; says it is loved by 300K+ writers. | Public page links Pricing but fetched homepage did not expose plan prices. | Lex owns "AI docs/editor"; Co-Create should not compete as another doc editor. Lead with voice-lock and transformation from fragments. |
-| [Sudowrite](https://sudowrite.com/pricing) | Creative-writing AI for authors; features include Brainstorm, Expand, Write, feedback, rephrasing, show-not-tell, characters, multilingual support. | Public monthly plans shown at $10, $22, and $44 with credit allowances. | Sudowrite owns novelist/fiction fun. Co-Create can borrow creative-partner energy but focus on essayists/solo publishers and voice fidelity. |
-| [Jasper](https://www.jasper.ai/pricing) | Marketing AI platform for on-brand written/visual content, multiple brands, campaigns, enterprise controls. | Pro listed at $59/month yearly or $69/month monthly; Business is custom. | Jasper owns marketing teams and brand governance. Co-Create should avoid enterprise content-machine language. |
-| [Typeshare](https://typeshare.co/) | All-in-one writing platform for writing, publishing everywhere, seeing what works, and improving; claims 85,000+ writers and 690,000+ pieces. | Public homepage says "Start Writing Now (It's Free)"; no paid plan details captured. | Typeshare owns creator distribution/workflow. Co-Create should integrate with distribution later, but the wedge is the voice engine before publishing ops. |
-| [Copy.ai](https://www.copy.ai/prices) | GTM AI for sales/marketing/operations with workflows, tables, actions, brand voice, and integrations. | Chat plan listed at $29/mo monthly or $24/mo annually; Growth $1,000/mo; Expansion $2,000/mo; Scale $3,000/mo. | Copy.ai anchors the high-price GTM automation category. Co-Create should stay out of GTM automation positioning for v1. |
-| [Writer](https://writer.com/) | Enterprise AI platform and agents for on-brand work, knowledge graph, connectors, trust/security, Palmyra LLMs. | Public homepage pushes demo/trial, not self-serve pricing. | Writer owns enterprise AI governance. Co-Create's counter-position is solo-author intimacy and taste. |
-| [Notion AI](https://www.notion.com/product/ai) | AI inside docs/workspaces: agents, enterprise search, meeting notes, admin controls, model/provider flexibility. | Notion AI is included with Business/Enterprise; custom agents move to credits after May 4, 2026. | Notion owns workspace context. Co-Create should not become a general workspace; it should be the author's voice chamber. |
+**New entrants in the voice-clone-writing pattern:** [Shortwave Ghostwriter](https://www.shortwave.com/blog/introducing-ghostwriter-ai-writing-that-learns-from-you/) (drafts in your voice from email history — email-scoped) and [Oiti](https://www.ghostwriting-ai.com/) (LinkedIn "digital clone" ghostwriter). **No direct competitor found** doing archive-trained voice-lock + anti-slop gating for essayists/newsletter authors — but the *pattern* is spreading through adjacent niches, which shortens the window for claiming the essayist wedge publicly.
 
-## Positioning
+## Positioning (unchanged, now shipped)
 
-**ICP:** high-output, voice-conscious solo publishers, essayists, newsletter writers, and founder-writers who want AI help but refuse generic AI voice.
+ICP, wedge, promise, and sharp line carry from V2 — and are now live on the landing page verbatim. The scan reinforces the sharp line: the adjacent voice-clone entrants are channel-scoped (email, LinkedIn); Co-Create's claim is the *published body of work*.
 
-**Wedge:** voice-lock + anti-slop doctrine + craft moves + calm playground.
+## Stage 1 — Design-Partner Readiness (P0, revised by live evidence)
 
-**Promise:** "Bring the unfinished self. Leave with transformed work that still sounds like you."
+Blockers found this cycle (all verified live, details in model/product/UX audits):
+1. Founder-voice seeding invalidates "Did it sound like you?"
+2. No spend cap default + any-user global profile switch + premium-pinned ladder = uncontrolled unit cost ($0.093/piece measured).
+3. Invite hygiene: one shared, guessable code ("Pelz"-class), present in internal docs, granting immediate generation. Minimum fix: rotate to a long random code per wave; better: per-partner codes so activation is attributable.
 
-**Sharp line:** Co-Create is not an AI content pipeline, enterprise brand-governance suite, or generic doc editor. It is a voice engine for people whose published body of work is the product.
+Already ready (verified): funnel, activation telemetry, feedback capture, concierge docs, readiness script.
 
-## Stage 1 - Design-Partner Readiness (P0)
+### Closure update — 2026-07-10
 
-Current funnel:
+- **Blocker 1 (founder-voice seeding) → closed:** brand-new owners now get a neutral starter voice; verified locally.
+- **Blocker 2, half closed:** the any-user global profile switch is now admin-gated (403 for non-admins, verified locally). Spend caps and the Railway `MODEL_*` ladder-masking question remain founder-only ops actions — not resolved by this build.
+- **Blocker 3 (invite hygiene) → still open:** rotating the shared invite code and/or moving to per-partner codes is a Railway env change, not attempted here.
 
-DM or personal email -> invite code -> register -> optionally build voice -> Bring notes -> Shape it -> first draft -> Polish -> Done/save.
+## Stage 2 — Paid-Launch Runway (P1/P2, unchanged gates)
 
-Gaps:
+P1: naming review (now urgent — public surface exists), ToS/privacy completion, support contact on the landing page, pricing hypotheses **after** pilot usage data. The measured $0.093/piece on the current ladder vs ~$0.01 on cost-first is now a real COGS input for pricing: at Sudowrite-anchor $10–22/mo, cost-first supports hundreds of pieces/user/mo; the pinned ladder supports ~100–200.
+P2: billing, referral loop, status page, integrations (all still gated on the conversion evidence rule).
 
-- No invite management beyond one shared code.
-- No per-owner spend caps.
-- No activation telemetry for time-to-first-draft.
-- No in-app feedback loop for voice match or edit effort.
-- Owner reassignment, probe-user cleanup, and Postgres password rotation are unverified admin tasks.
-- No onboarding script that tells a partner what to bring and what feedback to give.
+## Metrics (unchanged targets, instrumentation now live)
 
-Design-partner motion:
-
-- Invite 5-15 writers whose voice already matters to their audience: newsletter operators, founder-essayists, solo consultants, cultural/strategy writers.
-- Ask for one focused session: bring a messy note, generate a first draft, use one Polish move, save or reject, then answer three questions: "Did it sound like you?", "What did you change?", "Would you use it again next week?"
-- Founder publishes weekly with the tool during this period. The founder's Substack/body of work is the public demo.
-
-## Stage 2 - Paid-Launch Runway (P1/P2)
-
-**P1**
-- Public landing/waitlist with one promise, one founder demo, and design-partner proof.
-- ToS/privacy and data-use language before charging.
-- Usage limits, quotas, and support contact.
-- Naming/search/trademark decision record.
-- Pricing hypotheses only after usage data: solo monthly plan, limited credits, and a higher-touch founder/voice setup package.
-
-**P2**
-- Billing and account management.
-- Referral loop through published pieces.
-- Status page and incident language.
-- Export/publish integrations if design partners repeatedly ask for them.
-
-## Metrics
-
-- Activation: notes -> first draft in under 20 minutes.
-- Voice-match satisfaction: 80%+ say "sounds like me" or better after one edit pass.
-- Light-edit acceptance: 80%+ of saved drafts need light or moderate editing, not a full rewrite.
-- Repeat intent: 50%+ of design partners return for a second draft within 14 days.
-- Conversion gate: do not launch paid until at least 5 design partners complete two sessions and 3 would pay.
+Activation <20 min notes→draft; voice-match ≥80%; light-edit ≥80%; repeat ≥50% in 14 days; conversion gate: 5 partners × 2 sessions, 3 would pay. The readiness script can now compute the first three from production data.
 
 ## P0 / P1 / P2
 
-**P0**
-- Confirm admin safety items: invite code, owner reassignment, probe users, password rotation, model overrides, spend cap plan.
-- Run the 5-15 writer design-partner loop with manual concierge support.
-- Add a simple feedback capture surface or structured post-session form.
+**P0** — Fix the three pilot blockers (voice seeding, caps+profile gating+ladder decision, invite rotation); then invite wave 1 (5 writers) with concierge support; founder publishes weekly with the tool.
+**P1** — Naming review; ToS/privacy finalization; support contact; per-partner invite codes; pricing hypotheses from pilot COGS + usage.
+**P2** — Billing, referral, status page, export integrations, public case studies.
 
-**P1**
-- Landing/waitlist, usage caps, ToS/privacy, support/status basics, naming review.
-- Pricing tests based on observed usage and competitor anchors, not invented willingness-to-pay.
+## Acceptance Criteria V3
 
-**P2**
-- Billing, referral/distribution loop, export integrations, public case studies.
-
-## Acceptance Criteria
-
-- A stranger with an invite can reach a first draft in one sitting without founder hand-holding.
-- Every competitor claim in this doc has a URL and access date, or is omitted.
-- No paid launch until spend caps, ToS/privacy, support path, and naming review exist.
-- The founder can point to a published piece made with Co-Create as the demo.
+- Wave-1 invites go out only after the three P0 blockers are verified closed on production.
+- Each design partner's activation events are attributable to their invite.
+- Unit cost per piece on the chosen default ladder is a recorded, founder-approved number.
+- Typeshare's status is re-checked once before positioning claims reference it.

@@ -58,6 +58,22 @@ export const DEFAULT_VOICE_PROFILE: VoiceProfile = {
   updatedAt: new Date().toISOString()
 };
 
+// Seeded ONLY for a brand-new owner's first-ever voice (repository.ts getVoice()
+// auto-create path). Deliberately generic — DEFAULT_VOICE_PROFILE above is the
+// founder's own real, specific voice and must never be handed to a new signup.
+export const STARTER_VOICE_PROFILE: VoiceProfile = {
+  id: "voice-starter",
+  name: "Untitled voice",
+  pillars: [],
+  register:
+    "No fixed voice yet — write in a clear, direct register suited to the topic and audience. No imposed persona, theme, or theological framing.",
+  spine: [],
+  constraints: ["No throat-clearing filler"],
+  bannedTerms: DEFAULT_BANNED_TERMS,
+  lexicon: [],
+  updatedAt: new Date().toISOString()
+};
+
 // Reader-first refinement doctrine (adapted from the article-refiner skill).
 // Lives here so it seeds as the editable `refine` prompt template AND backs the
 // runRefine fallback, so refinement works even if the template was never seeded.
@@ -129,7 +145,7 @@ export const DEFAULT_PROMPT_TEMPLATES: PromptTemplateInput[] = [
     description: "Critiques the draft against quality gates and returns a stronger final.",
     notes: "Default production prompt",
     body:
-      "First critique the draft against four gates: answers the real question, usable immediately, nothing padded, clean structure. Then output a revised final. Separate Critique and Final clearly."
+      "First critique the draft against four gates: answers the real question, usable immediately, nothing padded, clean structure. Then output a line containing exactly <<<FINAL>>> and nothing else, then only the revised piece after it. No text after the revised piece."
   },
   {
     stage: "discover",

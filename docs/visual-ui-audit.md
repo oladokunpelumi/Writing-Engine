@@ -1,64 +1,63 @@
-# Co-Create Visual / UI Audit - Live V2 Re-Audit
+# Co-Create Visual / UI Audit — Live V3 Re-Audit
 
-Date: 2026-07-01
-Status: live product re-audit against production shell plus identical local mock interiors
+Date: 2026-07-09
+Status: first fully-authenticated visual audit — production landing, auth, Create, Library, Voice, Labs, and mobile captured live (`docs/audit-assets/live-*-2026-07-09.png`). Tokens unchanged since V2 (no commits touching `tailwind.config.ts`/`styles.css` since 2026-07-02), so V2's computed contrast ratios carry forward.
 
 ## Executive Read
 
-The shipped v2 now looks like Co-Create rather than a generic writing app. Production serves the custom mark as favicon, the root HTML title is `Co-Create`, the OG image exists, and the local mock flow shows the intended chamber: notes-first Bring, warm Draft, grouped Polish moves, quiet Done, and mobile-first engine content.
+The product now has a public face, and it is the strongest visual surface Co-Create ships: the landing page is calm, on-brand, and confident — the mark, the two-line promise with tide-colored "for/as" emphasis, one email field, one door, and "Messy is welcome here." as the quiet sign-off. The authenticated Create screen matches V2's intent: warm ember-wash Bring panel, legible step spine, disabled-CTA hint present, engine-first mobile with visible step labels at 390px (V2's P1, now closed on production).
 
-At audit time, the highest live defect was outside the pixels of the app: `og:image` was a relative URL (`/og-image.svg`). Design-Partner Readiness P0 changed `client/index.html` to the absolute production URL. The second defect was accessibility: ember text on paper is only 3.43:1 and ember text on ember wash is 3.07:1, so ember is acceptable for badges/UI accents but not normal body text at WCAG AA.
+The visual problem this cycle is not pixels but *placement*: the sidebar mixes writer surfaces with operator instruments. Every user sees Spend, a MODEL PROFILE select, a USAGE GUARD box, and the sentence "Explicit stage env vars still override this runtime profile." That block breaks the visual register (dense, technical, ALL-CAPS labels stacked under the calm nav), misstates state (the select showed "Balanced ladder" while the server reported cost-first), and hands every tenant a live global control (see model audit P0).
 
-Implementation follow-up, 2026-07-01: `client/index.html` now uses `https://writing-engine-production.up.railway.app/og-image.svg`, and normal-size product `text-ember` usage was removed in favor of ink/dusk/tide text with ember retained for accents.
+## Closure update — 2026-07-10
 
-Closure update, 2026-07-02: **P1 mobile step labels → closed** — Bring/Draft/Polish/Done text labels are now always visible (compact type + tighter connectors at 390px), not bare numbers.
+- **P1 "operator block breaks the writer surface" → closed:** Spend, the model-ladder display, and the usage guard now render only inside the Labs drawer, de-emphasized and in read-only form; the always-visible sidebar no longer carries this block.
+- **P1 "profile select renders stale/incorrect state" → closed:** now hydrated from the server on every `refresh()`, and is display-only (see model audit P0-3 closure).
+- **P1 "Library visual hierarchy inverts" → closed:** posts now render before the Add-Memory/instrument panel when the library has 3 posts or fewer.
 
-## Acceptance-Criteria Scorecard
+## Acceptance-Criteria Scorecard (scored against V2's own criteria)
 
-| Criterion | Status | Evidence |
+| V2 criterion | Status | Evidence |
 | --- | --- | --- |
-| Custom mark replaces stock icon | Met | Production `/favicon.svg` returns the bespoke two-stroke Co-Create mark; `live-welcome-2026-07-01.png` shows the mark on the auth shell. |
-| Favicon and OG image exist | Met | `/favicon.svg` and `/og-image.svg` return `200`; `client/index.html` now points `og:image` to the absolute production URL. |
-| Ember/dusk tokens exist and map to states | Met | `client/tailwind.config.ts` defines ember/dusk/washes; screenshots show ember for Draft/Done and grouped moves. |
-| Mobile leads with the engine | Met | `local-mobile-create-2026-07-01.png` first paints the top bar, step spine, and Bring surface rather than a full sidebar. |
-| Step labels remain legible | Partly met | Desktop labels are legible; mobile screenshot keeps numbered step controls but omits text labels at 390px. |
-| Draft reveal is present | Met | `local-draft-2026-07-01.png` shows the warm elevated draft surface and "written as you" badge after the reveal state. |
-| Living piece outranks instruments | Met | `local-polish-2026-07-01.png` keeps the draft centered below smaller move instruments. |
-| Text contrast passes | Partly met | Ink 15.74:1, dusk 5.21:1, tide 4.75:1 on paper pass; ember 3.43:1 on paper and 3.07:1 on ember wash fail for normal text. |
+| Shared links render a card with the Co-Create mark on major social scrapers | Met (HTML side) | Production HTML emits absolute `og:image` (`https://writing-engine-production.up.railway.app/og-image.svg`, 200, 2026-07-09). Scraper-side render still unchecked against a card debugger. |
+| No normal-sized text uses ember on paper/ember wash unless ≥4.5:1 | Met | Live screens show ember only on badges ("MESSY IS WELCOME HERE."), washes, and accents; body text is ink/dusk. Tokens unchanged since the V2 fix. |
+| Mobile first paint shows the engine and each step is identifiable without guessing | Met | `live-create-mobile-2026-07-09.png`: top bar + numbered steps **with** Bring/Draft/Polish/Done text labels at 390px. |
+| Audit screenshots reproducible from a documented script or working harness attach | Met | This cycle's captures come from a Playwright script (scratchpad `ux-journey*.mjs` pattern) against production with the test account; harness attach remained blocked (see P2). |
 
 ## Evidence Table
 
 | Evidence | Result |
 | --- | --- |
-| Production root HTML | `<title>Co-Create</title>`, description present, `og:title`, `og:description`, `og:type`; source now uses absolute `og:image`. |
-| Production favicon | `HTTP/2 200`, `content-type: image/svg+xml`, custom mark SVG. |
-| Production OG image | `HTTP/2 200`, `content-type: image/svg+xml`, mark plus "Still yours. Now shaped." |
-| Screenshots | `live-welcome-2026-07-01.png`, `local-bring-2026-07-01.png`, `local-draft-2026-07-01.png`, `local-polish-2026-07-01.png`, `local-done-2026-07-01.png`, `local-mobile-create-2026-07-01.png`. |
-| Contrast ratios | Ember/paper 3.43:1; dusk/paper 5.21:1; ink/paper 15.74:1; tide/paper 4.75:1; ember/ember-wash 3.07:1; dusk/dusk-wash 4.83:1. |
+| Landing (desktop + 390px) | Mark, promise, sub-promise, invite-request card, sign-in door, "Messy is welcome here." Clean hierarchy, generous whitespace. |
+| Auth screen | Minimal two-field card, register toggle, back link. |
+| Create (authed, desktop) | Step spine, ember-wash Bring panel, disabled-CTA hint "Add a line or some notes to begin." visible. |
+| Sidebar (authed) | Nav + Spend $0.0927 + MODEL PROFILE select (reading "Balanced ladder" against server cost-first) + USAGE GUARD + env-var caveat sentence + Log out. |
+| Library (authed, 1 draft) | Instruments (Add Memory, order seeding, arc) render above the single post card; post card shows raw "# Critique" body (defect logged in product/UX audits). |
+| Voice (authed) | Dusk "MIRROR — Here's how you sound." treatment renders as designed; content is the seeded founder voice (product P0, not a visual defect). |
+| Contrast (carried from V2, tokens unchanged) | Ink 15.74:1, dusk 5.21:1, tide 4.75:1 on paper pass; ember 3.43:1 accent-only rule in force. |
 
 ## Live Findings
 
-- **P0 closed in Design-Partner Readiness: social card URL is absolute.** Verify on the deployed HTML after release.
-- **P0 closed in Design-Partner Readiness: ember text no longer carries normal product body copy.** Keep ember for badges/icons/borders or increase size/weight; use ink/dusk/tide for normal text.
-- **P1: mobile step labels need one more pass.** The mobile layout is much better, but numeric-only steps are less self-explanatory than Bring/Draft/Polish/Done labels.
-- **P2: browser-harness capture is blocked.** Chrome remote-debugging required profile/Allow setup; screenshots were captured via Playwright instead.
+- **P1 — Operator block breaks the writer surface.** Spend/MODEL PROFILE/USAGE GUARD/env-caveat form a dense technical stack under the calm nav — wrong register, wrong audience, and visually the heaviest element on an otherwise quiet screen. Move behind Labs or an admin-only flag; restyle whatever remains in brand voice.
+- **P1 — Profile select renders stale/incorrect state** ("Balanced ladder" vs server cost-first). A control that misreports global state is worse than no control.
+- **P1 — Library visual hierarchy inverts** for small libraries: three instrument panels outrank the user's only piece.
+- **P2 — Social-card render still unverified on a scraper debugger** (HTML is correct; the card itself hasn't been seen).
+- **P2 — browser-harness attach still blocked** (Chrome Allow handshake); Playwright fallback is scripted and repeatable, so this is now tooling debt rather than an evidence gap.
 
 ## Next Quality Bar
 
 **P0**
-- Verify absolute `og:image` on production after deploy.
-- Keep ember reserved for non-body accents unless contrast is increased.
+- None purely visual this cycle — the visual P0s from V1/V2 (OG URL, ember contrast, mobile labels) are all verified closed on production.
 
 **P1**
-- Restore compact mobile step labels or accessible visible text at 390px.
-- Add screenshot coverage for reduced-motion reveal state.
+- Relocate/gate the operator block; fix profile-select hydration; reorder Library for small libraries.
 
 **P2**
-- Add a paper texture only if it remains subtle and does not lower contrast.
+- Run the OG card through a social debugger once; capture a reduced-motion reveal screenshot; unblock the harness attach once for parity.
 
-## Acceptance Criteria V2
+## Acceptance Criteria V3
 
-- Shared links render a card with the Co-Create mark on major social scrapers.
-- No normal-sized text uses ember on paper or ember wash unless it reaches 4.5:1.
-- Mobile first paint still shows the engine and the user can identify each step without guessing.
-- Future audit screenshots are reproducible from a documented local mock script or working browser-harness attach.
+- No operator instrument (spend, model policy, env caveats) is visible to a non-admin account.
+- Every control that displays global state reads that state from the server on mount.
+- A one-piece Library visually leads with the piece.
+- A social-card debugger screenshot of the OG render exists in `docs/audit-assets/`.

@@ -1,67 +1,67 @@
-# Co-Create Model Audit - Live V2 Re-Audit
+# Co-Create Model Audit — Live V3 Re-Audit
 
-Date: 2026-07-01
-Status: live product re-audit against `https://writing-engine-production.up.railway.app`
+Date: 2026-07-09
+Status: authenticated live re-audit against `https://writing-engine-production.up.railway.app` with a fresh invite-registered account and a real generation run (frame → draft → sharpen, $0.093 total spend). This is the first cycle with production-interior evidence; V2's headline "Unverified" items are now resolved — several in the wrong direction.
 
 ## Executive Read
 
-The live product is running the right broad architecture for the cost thesis: production reports `aiProvider: "openrouter"`, vector retrieval is enabled, and auth is required. The repo also now contains the cost-first profile resolver, Labs model-profile control, empty-output retry/fallback logic, and generation cost telemetry.
+The two-cycle question — "is cost-first actually live?" — finally has an answer, and it is **no**. The *setting* is cost-first (`GET /api/model-profile` → `{"profile":"cost-first"}`, authed, 2026-07-09), but the *effective ladder* is masked by per-stage `MODEL_*` env pins on Railway, exactly the scenario V1 and V2 warned about. A live run showed frame on `google/gemini-3.5-flash`, draft on `anthropic/claude-sonnet-4.6`, and sharpen on `anthropic/claude-opus-4.8`; cost-first maps all three stages to `z-ai/glm-5.2`. None of the observed models even appear in the cost-first rows, so these are environment pins, not profile output. Effective cost: ~$0.093 per piece vs a cost-first target near $0.01 — roughly 10×, with no spend caps set.
 
-The live risk is not the code path. It is operational certainty. The public app confirms OpenRouter and auth, but the effective production ladder is auth/admin-gated: `/api/model-profile` requires a token and the Railway CLI is not available in this workspace. The deployment should therefore be scored as **mostly implemented, partly unverified** until Railway variables or an authenticated model-profile check confirm that per-stage `MODEL_*` overrides are not masking the intended cost-first profile.
+Worse, the profile control is a live multi-tenant hazard: `PUT /api/model-profile` accepts any authenticated user's token (verified live, 200), mutates `process.env` and the kv-persisted setting, and therefore silently changes every tenant's ladder. One enthusiastic design partner clicking "Premium polish" re-prices the whole deployment.
 
-## Closure update — 2026-07-02
+The good news is equally concrete: telemetry works end-to-end (latency/cost/fallback recorded per generation and the sidebar Spend meter matched measured cost to the tenth of a cent), the empty-output guard was armed but never needed (fallback `null` on all calls), and output quality on the current (expensive) ladder is high.
 
-- **P1 "history is close but incomplete" → closed:** `latency_ms` and `fallback_model` are now recorded per generation (chat, streaming, and empty-output-fallback paths) and displayed in History.
-- **P1 "model-profile control is runtime-local" → closed:** the profile persists in kv, is loaded at boot, and survives restarts (test-covered).
-- Still open: Railway env confirmation of the effective production ladder (use `/api/admin/readiness` with `ADMIN_TOKEN` once set).
+## Closure update — 2026-07-10
 
-## Acceptance-Criteria Scorecard
+- **P0 "PUT /api/model-profile is any-user, global, durable" → closed:** the route now requires `x-admin-token` matching `ADMIN_TOKEN` (reusing `adminReadinessAllowed`, the same gate as `/api/admin/readiness`); a non-admin token now gets 403 (verified locally). The client's writable select was replaced with a read-only "set by the workspace admin" display.
+- **P1 "profile select renders stale/incorrect state" → closed:** the client now hydrates the displayed profile from `GET /api/model-profile` inside `refresh()` (which runs post-login), not only in the pre-auth `bootstrap()` that was silently skipped for authenticated sessions.
+- **Still open (founder-only, no dashboard access from here):** the Railway `MODEL_*` per-stage env-pin masking and the spend-cap env vars are unchanged — these require a Railway policy decision and env-var changes, not code.
 
-| Criterion | Status | Evidence |
+## Acceptance-Criteria Scorecard (scored against V2's own criteria)
+
+| V2 criterion | Status | Evidence |
 | --- | --- | --- |
-| Production AI path is live | Met | `curl /api/health` returned `200` with `{"aiProvider":"openrouter","vectorRetrievalEnabled":true,"authRequired":true}` on 2026-07-01. |
-| Auth gates model/profile internals | Met | Public `/api/model-profile` returned `HTTP/2 401 {"error":"Authentication required"}`; production health reports `authRequired: true`. |
-| Model profiles exist in code | Met | `server/src/openrouter.ts` defines `cost-first`, `balanced`, and `premium`; `client/src/App.tsx` exposes a Labs "MODEL PROFILE" select. |
-| Cost-first is actually the effective production profile | Unverified | `render.yaml` and `.env.example` default to `MODEL_PROFILE=cost-first`, but Railway env and per-stage overrides could not be read from this workspace. |
-| Empty visible output has a retry/fallback guard | Met | `server/src/openrouter.ts` includes retry-on-empty paths in `rawChat` and streaming recovery; `server/tests/routing.test.ts` covers fallback behavior. |
-| Generation history surfaces model/cost | Partly met | History UI states stage/model/provider/token/cost are shown; latency/fallback are explicitly called "ready for display once the server stores those fields." |
-| Per-owner spend caps exist | Unmet | No quota/spend-cap route or table was found; this remains a GTM safety P0 before design partners. |
+| A future audit can prove the live profile and every active per-stage override from production evidence | Met (the mechanism), Failed (the finding) | Authed `GET /api/model-profile` → `cost-first`; live generations expose the real per-stage models, proving overrides are active: frame=`google/gemini-3.5-flash`, draft=`anthropic/claude-sonnet-4.6`, sharpen=`anthropic/claude-opus-4.8` (all 2026-07-09). |
+| One enthusiastic design partner cannot drain the shared OpenRouter key | Unmet | `GET /api/usage` for a fresh account returns spend but **no limit fields** → `DEFAULT_DAILY_COST_LIMIT_USD`/`_MONTHLY_` unset on Railway; no per-owner cap active. Cap machinery exists (`usage_limits` table, `scripts/set-owner-limit.ts`, env fallback in `repository.ts:1238`). |
+| Every generation history row shows stage, provider, model, tokens, cost, latency, and fallback status | Met | Live responses carried `latencyMs` (6288 / 33589 / 27430) and `fallbackModel: null`; `/api/generations` returns rows with usage; History UI displays them. |
+| Model recommendations tied to a real bakeoff or cited availability | Met | The 2026-06-30 bakeoff table stands; this audit adds live production quality/latency/cost datapoints per stage. |
 
-## Evidence Table
+## Live Generation Evidence (2026-07-09, fresh account, one full pipeline)
 
-| Evidence | Result |
-| --- | --- |
-| Production health | `HTTP/2 200`; OpenRouter, vector retrieval, auth required. |
-| Production model profile | `HTTP/2 401`; effective profile cannot be read without auth/admin access. |
-| Local mock health | `HTTP/1.1 200`; mock provider, vector disabled, auth disabled for screenshots. |
-| Local screenshot | `docs/audit-assets/local-draft-2026-07-01.png` shows the runtime model profile select set to Cost-first in mock mode. |
-| Typecheck | `npm run typecheck` passed for shared, server, and client. |
-| Admin/Railway evidence | Unverified: `railway` CLI not present; browser-harness Chrome attach blocked by remote-debugging setup. |
+| Stage | Model actually used | Cost-first says | Latency (recorded) | Cost | Output |
+| --- | --- | --- | --- | --- | --- |
+| frame | `google/gemini-3.5-flash` | `z-ai/glm-5.2` | 6,288 ms | $0.0072 | Solid structured frame (cold open, want, spine). |
+| draft | `anthropic/claude-sonnet-4.6` | `z-ai/glm-5.2` | 33,589 ms | $0.0210 | 830 words, genuinely strong, no slop tells. |
+| sharpen | `anthropic/claude-opus-4.8` | `z-ai/glm-5.2` | 27,430 ms | $0.0644 | 1,203-word revision preceded by a critique block (see UX audit P0). |
+| **total** | | | ~67 s | **$0.0927** | Sidebar Spend meter read exactly $0.0927. |
+
+`google/gemini-3.5-flash` appears in **no** profile row → unambiguous env pin. Opus-on-sharpen matches the *premium* row → likely `MODEL_SHARPEN` pin.
 
 ## Live Findings
 
-- **P0: effective ladder still needs admin confirmation.** Public production proves OpenRouter is live, not which model ladder is active. Confirm Railway `MODEL_PROFILE`, `MODEL_*`, `MAXTOK_*`, and `FUSION_*` variables before claiming the cost-first deployment is truly live.
-- **P0: spend caps are missing.** Design partners can generate real OpenRouter cost; there is no visible per-owner quota, per-user daily cap, or admin kill switch beyond global provider limits.
-- **P1: history is close but incomplete.** Cost/model/provider are stored and visible; latency/fallback are not yet stored as first-class fields.
-- **P1: model-profile control is runtime-local.** The Labs switch mutates process env; it is useful for one server process, but not durable admin policy.
+- **P0 — Effective ladder ≠ selected profile (masking confirmed).** Railway `MODEL_FRAME`/`MODEL_DRAFT`/`MODEL_SHARPEN` (at minimum) override cost-first. Decide deliberately: either remove the pins so the profile is the single source of truth, or codify today's pinned ladder as the intended profile and update `.env.example`'s doctrine. What is untenable is a Labs switch that reads cost-first while spending premium.
+- **P0 — `PUT /api/model-profile` is any-user, global, durable.** Verified live with a non-admin token (200). It must be admin-gated (`ADMIN_TOKEN` or an owner-role check); as-is it is both a cost hazard and a cross-tenant privilege escalation.
+- **P0 — Spend caps still absent in production.** Third consecutive cycle. Everything needed exists; it is one Railway env var (`DEFAULT_DAILY_COST_LIMIT_USD`) plus optionally `scripts/set-owner-limit.ts` per partner. At the observed $0.093/piece on the pinned ladder, an uncapped partner running 50 pieces/day ≈ $4.65/day/user.
+- **P1 — Profile select shows stale state.** UI displayed "Balanced ladder" while the server reported cost-first; hydrate the select from `GET /api/model-profile` on mount.
+- **P1 — `ADMIN_TOKEN` still unset/unshared.** `/api/admin/readiness` → 403; the readiness report remains unreadable from outside. (The workaround this cycle was a full authed journey; the endpoint is still the right long-term evidence surface.)
 
 ## Next Quality Bar
 
 **P0**
-- Confirm Railway env and record the effective production ladder in this doc.
-- Add per-owner spend caps before inviting 5-15 design partners.
-- Add an authenticated read-only `/api/model-profile` evidence capture to future audits.
+- Reconcile the ladder: remove Railway per-stage pins **or** adopt them into the profile map; re-verify with one live generation per changed stage and record the result here.
+- Admin-gate `PUT /api/model-profile`.
+- Set `DEFAULT_DAILY_COST_LIMIT_USD` (suggest $1–2 for pilot accounts) and verify the 429 + brand-voice copy path live.
 
 **P1**
-- Store and display latency, fallback model, and fallback reason per generation.
-- Add explicit admin-only routing status: profile, overrides, max tokens, fusion/web-search modes.
+- Fix profile-select hydration.
+- Set `ADMIN_TOKEN`; capture `/api/admin/readiness` output in the next audit.
 
 **P2**
-- Revisit `LLM_BASE_URL`/local provider sovereignty after design-partner usage shows which stages most need privacy or cost relief.
+- Revisit the local-provider (`LLM_BASE_URL`) milestone only after pilot usage shows which stages need privacy or cost relief.
 
-## Acceptance Criteria V2
+## Acceptance Criteria V4
 
-- A future audit can prove the live profile and every active per-stage override from production evidence.
-- One enthusiastic design partner cannot drain the shared OpenRouter key.
-- Every generation history row shows stage, provider, model, tokens, cost, latency, and fallback status.
-- Any model recommendation remains tied to a real bakeoff table or a cited provider availability check.
+- One authed probe (`/api/admin/readiness` or equivalent) lists the *effective* model per stage, and it matches the selected profile with zero silent pins.
+- A non-admin token receives 403 from `PUT /api/model-profile`.
+- A pilot account that exceeds its daily cap receives the branded 429 (verified live once).
+- Per-piece pipeline cost on the default ladder is recorded in this doc from a live run, and the founder has explicitly chosen it.

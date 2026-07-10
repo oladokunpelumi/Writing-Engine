@@ -120,6 +120,7 @@ export default function App() {
   const [frame, setFrame] = useState("");
   const [draft, setDraft] = useState("");
   const [finalText, setFinalText] = useState("");
+  const [sharpenCritique, setSharpenCritique] = useState("");
   const [seo, setSeo] = useState<SeoPackage | null>(null);
   const [image, setImage] = useState<ImageAsset | null>(null);
   const [imageStyle, setImageStyle] = useState("editorial");
@@ -158,7 +159,7 @@ export default function App() {
   }
 
   async function refresh() {
-    const [nextVoice, nextVoices, nextShows, nextPosts, nextSchedules, nextPrompts, nextGenerations, nextCorpus, nextBriefSeeds, nextWorkflows, nextUsage] = await Promise.all([
+    const [nextVoice, nextVoices, nextShows, nextPosts, nextSchedules, nextPrompts, nextGenerations, nextCorpus, nextBriefSeeds, nextWorkflows, nextUsage, nextModelProfile] = await Promise.all([
       api.getVoice(),
       api.listVoices(),
       api.shows(),
@@ -169,8 +170,10 @@ export default function App() {
       api.corpus(),
       api.briefSeeds(),
       api.workflows(),
-      api.usage()
+      api.usage(),
+      api.modelProfile()
     ]);
+    setModelProfile(nextModelProfile.profile);
     setVoice(nextVoice);
     setVoices(nextVoices);
     setShows(nextShows.shows);
@@ -224,7 +227,7 @@ export default function App() {
           <CoCreateMark className="h-11 w-11" />
           <div>
             <h1 className="font-display text-xl font-bold">Co-Create</h1>
-            <p className="text-xs text-slate-500">writes as you · {health.aiProvider}</p>
+            <p className="text-xs text-slate-500">writes as you</p>
           </div>
         </div>
         {shows.length > 1 ? (
@@ -267,41 +270,24 @@ export default function App() {
             <NavButton tab="corpus" current={tab} setTab={setTabAndClose} icon={<BookOpen size={16} />} label="Corpus" />
             <NavButton tab="prompts" current={tab} setTab={setTabAndClose} icon={<SlidersHorizontal size={16} />} label="Prompts" />
             <NavButton tab="history" current={tab} setTab={setTabAndClose} icon={<History size={16} />} label="History" />
+            <div className="mt-3 border-t border-slate-200 pt-3">
+              {totalSpend > 0 ? <Metric label="Today's shaping" value={`$${totalSpend.toFixed(4)}`} /> : null}
+              <p className="mt-3 text-xs uppercase tracking-wide text-slate-500">Model ladder</p>
+              <p className="text-sm text-ink">
+                {modelProfile === "cost-first" ? "Cost-first" : modelProfile === "premium" ? "Premium polish" : "Balanced"}
+              </p>
+              <p className="mt-1 text-xs text-slate-500">Set by the workspace admin.</p>
+              {usageStatus ? (
+                <div className="mt-3 rounded-md border border-slate-200 bg-white/70 p-3 text-xs text-slate-600">
+                  <p className="mt-1">Today ${usageStatus.dailySpendUsd.toFixed(4)}{usageStatus.dailyLimitUsd !== undefined ? ` / $${usageStatus.dailyLimitUsd.toFixed(2)}` : ""}</p>
+                  <p>Month ${usageStatus.monthlySpendUsd.toFixed(4)}{usageStatus.monthlyLimitUsd !== undefined ? ` / $${usageStatus.monthlyLimitUsd.toFixed(2)}` : ""}</p>
+                  {usageStatus.blocked ? <p className="mt-1 font-bold text-dusk">{usageStatus.reason}</p> : null}
+                </div>
+              ) : null}
+            </div>
           </div>
         ) : null}
       </div>
-      {totalSpend > 0 ? (
-        <div className="mt-6 border-t border-slate-200 pt-5">
-          <Metric label="Spend" value={`$${totalSpend.toFixed(4)}`} />
-        </div>
-      ) : null}
-      <label className="mt-4 block border-t border-slate-200 pt-4">
-        <span className="label">Model profile</span>
-        <select
-          className="input"
-          value={modelProfile}
-          onChange={(event) =>
-            runStep(
-              "Switching model profile",
-              () => api.setModelProfile(event.target.value as typeof modelProfile),
-              (result) => setModelProfile(result.profile)
-            )
-          }
-        >
-          <option value="balanced">Balanced ladder</option>
-          <option value="cost-first">Cost-first</option>
-          <option value="premium">Premium polish</option>
-        </select>
-        <p className="mt-2 text-xs text-slate-500">Explicit stage env vars still override this runtime profile.</p>
-        {usageStatus ? (
-          <div className="mt-3 rounded-md border border-slate-200 bg-white/70 p-3 text-xs text-slate-600">
-            <p className="font-bold uppercase text-slate-500">Usage guard</p>
-            <p className="mt-1">Today ${usageStatus.dailySpendUsd.toFixed(4)}{usageStatus.dailyLimitUsd !== undefined ? ` / $${usageStatus.dailyLimitUsd.toFixed(2)}` : ""}</p>
-            <p>Month ${usageStatus.monthlySpendUsd.toFixed(4)}{usageStatus.monthlyLimitUsd !== undefined ? ` / $${usageStatus.monthlyLimitUsd.toFixed(2)}` : ""}</p>
-            {usageStatus.blocked ? <p className="mt-1 font-bold text-dusk">{usageStatus.reason}</p> : null}
-          </div>
-        ) : null}
-      </label>
       {health.authRequired ? (
         <button className="btn mt-4 w-full" onClick={() => { setToken(null); setAuthed(false); }}>
           Log out
@@ -369,6 +355,7 @@ export default function App() {
               setDraft={setDraft}
               finalText={finalText}
               setFinalText={setFinalText}
+              sharpenCritique={sharpenCritique}
               seo={seo}
               image={image}
               repurpose={repurpose}
@@ -414,6 +401,7 @@ export default function App() {
               })}
               onSharpen={() => runStep("Sharpening", () => api.sharpen(draft, { draftPostId }), async (res) => {
                 setFinalText(res.content);
+                setSharpenCritique(res.critique ?? "");
                 setCitations(res.citations);
                 setLastGenerationId(res.generationId);
                 setDraftPostId(res.draftPostId);
@@ -422,6 +410,7 @@ export default function App() {
               })}
               onDeepSharpen={() => runStep("Deep sharpening (Fusion)", () => api.sharpen(draft, { fusion: true, draftPostId }), async (res) => {
                 setFinalText(res.content);
+                setSharpenCritique(res.critique ?? "");
                 setCitations(res.citations);
                 setLastGenerationId(res.generationId);
                 setDraftPostId(res.draftPostId);
@@ -511,6 +500,7 @@ export default function App() {
                 setFrame("");
                 setDraft("");
                 setFinalText("");
+                setSharpenCritique("");
                 setSeo(null);
                 setImage(null);
                 setSectionImages([]);
@@ -597,6 +587,7 @@ export default function App() {
                 setFrame("");
                 setDraft("");
                 setFinalText("");
+                setSharpenCritique("");
                 setDraftPostId(undefined);
                 setTab("compose");
               }}
@@ -658,6 +649,7 @@ function ComposeView(props: {
   setDraft: (value: string) => void;
   finalText: string;
   setFinalText: (value: string) => void;
+  sharpenCritique: string;
   seo: SeoPackage | null;
   image: ImageAsset | null;
   repurpose: RepurposePackage | null;
@@ -886,6 +878,12 @@ function ComposeView(props: {
                 <ActionButton icon={<Search size={16} />} disabled={!props.draft || Boolean(props.busy)} onClick={props.onSharpen}>Sharpen</ActionButton>
                 <ActionButton icon={<Layers size={16} />} disabled={!props.draft || Boolean(props.busy)} onClick={props.onDeepSharpen}>Deep Sharpen</ActionButton>
               </div>
+              {props.sharpenCritique ? (
+                <details className="mt-3 rounded-md border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-600">
+                  <summary className="cursor-pointer select-none font-semibold text-slate-700">What changed</summary>
+                  <p className="mt-2 whitespace-pre-wrap">{props.sharpenCritique}</p>
+                </details>
+              ) : null}
             </div>
           ) : null}
           {move === "refine" ? (
@@ -1246,9 +1244,12 @@ function LibraryView(props: {
       if (bo !== undefined) return 1;
       return 0;
     });
+  // A small library leads with the writer's own work, not the tooling around it —
+  // the instrument panel only earns top billing once there's enough to organize.
+  const instrumentsFirst = props.posts.length > 3;
   return (
     <div className="grid gap-5 xl:grid-cols-[390px_1fr]">
-      <section className="desk-panel h-fit">
+      <section className={`desk-panel h-fit ${instrumentsFirst ? "order-1" : "order-2"}`}>
         <PanelTitle icon={<Plus size={18} />} title="Add Memory" />
         <Field label="Title" value={props.draft.title} onChange={(title) => props.setDraft({ ...props.draft, title })} />
         <Field label="Tags" value={props.draft.tags} onChange={(tags) => props.setDraft({ ...props.draft, tags })} />
@@ -1275,7 +1276,7 @@ function LibraryView(props: {
           </select>
         </label>
       </section>
-      <section className="grid gap-3">
+      <section className={`grid gap-3 ${instrumentsFirst ? "order-2" : "order-1"}`}>
         <div className="panel-piece">
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div>

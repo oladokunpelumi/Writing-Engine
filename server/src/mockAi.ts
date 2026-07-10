@@ -121,7 +121,8 @@ export function mockSharpen(draft: string) {
     "- There is very little padding; keep the aphoristic cadence, but do not let it become ornamental.",
     "- The movement from observation to invitation is clean.",
     "",
-    "Final:",
+    "<<<FINAL>>>",
+    "",
     draft.replace(
       "A better system helps, yes.",
       "A better system helps, yes: a brief that names the tension, a library that remembers what you have already said, and a calendar that gives courage a date."

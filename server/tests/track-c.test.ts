@@ -30,8 +30,27 @@ describe("per-owner isolation", () => {
       await repo.setActiveVoice(created.id);
       expect((await repo.getVoice()).name).toBe("Faith essays");
     });
-    // bob is unaffected
-    expect(await ownerContext.run("bob", async () => (await repo.getVoice()).name)).toBe("Default");
+    // bob is unaffected — and a brand-new owner gets the neutral starter, not "Default"
+    expect(await ownerContext.run("bob", async () => (await repo.getVoice()).name)).toBe("Untitled voice");
+  });
+
+  it("gives a brand-new owner a neutral starter voice, never the founder's real one", async () => {
+    const repo = await freshRepo();
+    const voice = await ownerContext.run("carol", () => repo.getVoice());
+    expect(voice.name).toBe("Untitled voice");
+    expect(voice.pillars).toEqual([]);
+    expect(voice.spine).toEqual([]);
+    expect(voice.lexicon).toEqual([]);
+    expect(voice.pillars.join(" ")).not.toContain("theology");
+  });
+
+  it("still migrates the founder's own real voice via the legacy single-tenant path", async () => {
+    const repo = await freshRepo();
+    // seedDefaults() runs once at boot with no owner context, i.e. only ever the
+    // fallback owner ("owner-default") — this must keep receiving the real voice.
+    await repo.seedDefaults();
+    const voice = await repo.getVoice();
+    expect(voice.pillars.some((pillar) => pillar.includes("Faith and theology"))).toBe(true);
   });
 });
 

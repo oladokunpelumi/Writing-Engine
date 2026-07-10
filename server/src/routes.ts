@@ -60,6 +60,7 @@ import {
   runSharpen,
   runStage,
   sharpenPrompt,
+  splitSharpenOutput,
   systemPrompt
 } from "./openrouter";
 import { retrieve, vectorRetrievalEnabled } from "./retrieval";
@@ -216,7 +217,14 @@ export function createRouter(repo: Repository) {
     res.status(201).json(feedback);
   });
 
+  // Admin-only: this setting is process-global (every tenant's ladder), not
+  // owner-scoped, so any authenticated user changing it reprices every other
+  // tenant's generations. True per-owner cost policy is a P1/P2 follow-up.
   router.put("/model-profile", async (req, res) => {
+    if (!adminReadinessAllowed(req.header("x-admin-token"))) {
+      res.status(403).json({ error: "Admin token required" });
+      return;
+    }
     const profile = String(req.body?.profile ?? "");
     if (!["cost-first", "balanced", "premium"].includes(profile)) {
       res.status(400).json({ error: "profile must be cost-first, balanced, or premium" });
@@ -488,8 +496,9 @@ export function createRouter(repo: Repository) {
         response,
         promptVersionId: promptVersion?.id
       });
-      const draftPostId = await upsertDraft(repo, { draftPostId: parsed.draftPostId, finalText: response.content });
-      res.json({ ...response, generationId: record.id, draftPostId });
+      const { critique, final } = splitSharpenOutput(response.content);
+      const draftPostId = await upsertDraft(repo, { draftPostId: parsed.draftPostId, finalText: final });
+      res.json({ ...response, content: final, critique, generationId: record.id, draftPostId });
     } catch (error) {
       next(error);
     }
@@ -1170,16 +1179,21 @@ async function runWorkflow(repo: Repository, stages: PromptStage[], brief: Brief
       brief,
       retrievedPostIds: index === 0 ? retrievedPostIds : []
     });
+    // Sharpen's raw content is critique + final; every downstream consumer
+    // (the next stage's input, the saved draft, the client) wants only the final.
+    const { critique, final: stageFinal } =
+      stage === "sharpen" ? splitSharpenOutput(response.content) : { critique: undefined, final: response.content };
     results.push({
       stage,
-      content: response.content,
+      content: stageFinal,
       provider: response.provider,
       model: response.model,
       promptVersionId: promptVersion?.id,
       generationId: record.id,
-      citations: response.citations ?? []
+      citations: response.citations ?? [],
+      critique
     });
-    carry = response.content;
+    carry = stageFinal;
   }
 
   return { stages: results, final: carry };
