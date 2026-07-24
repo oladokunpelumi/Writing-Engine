@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { openDatabase } from "../src/db";
 import { Repository } from "../src/repository";
 import { ownerContext } from "../src/context";
-import { analyzeReference, runVideoScript, runVideoShots } from "../src/videoStudio";
+import { analyzeReference, runVideoScript, runVideoShots, suggestPersonas } from "../src/videoStudio";
 import type { VideoPersonaInput } from "../../shared/src";
 
 async function freshRepo() {
@@ -56,6 +56,13 @@ describe("video engine (mock mode)", () => {
     const blueprint = await analyzeReference("a transcript of a viral video");
     expect(Array.isArray(blueprint.structure)).toBe(true);
     expect(blueprint.hookType.length).toBeGreaterThan(0);
+  });
+
+  it("suggestPersonas casts one persona per attention angle", async () => {
+    const { script } = await runVideoScript({ sourceText: "building wealth from nothing", sourceType: "product", platform: "tiktok", targetSeconds: 24 });
+    const casts = await suggestPersonas({ script, sourceText: "building wealth" });
+    expect(casts.map((c) => c.angle).sort()).toEqual(["authority", "contrast", "relatable"]);
+    expect(casts.every((c) => c.name && c.appearance && c.rationale)).toBe(true);
   });
 });
 

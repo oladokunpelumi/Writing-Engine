@@ -157,6 +157,17 @@ export const VEO_PROMPT_DOCTRINE = [
   "Be cinematic and concrete; do not put on-screen caption instructions inside the video prompt (captions are handled separately)."
 ].join("\n");
 
+// Cast a UGC presenter whose identity itself makes the viewer stop scrolling.
+// Three deliberate angles — with an earned-not-mockery guardrail so the surprise
+// reads as credibility, never ridicule or stereotype.
+export const PERSONA_CASTING_DOCTRINE = [
+  "Cast a presenter whose very identity makes the viewer stop scrolling, matched to the script's ONE thing. Use one of three angles:",
+  "CONTRAST — the presenter is the last person you'd expect to deliver this message, and that incongruity is the hook. It MUST be earned, never mockery: the surprise comes from a real reversal (once 300 lbs, now a coach; once broke, now building wealth), so it reads as hard-won credibility. Never demean, caricature, or reduce a person to a stereotype or a punchline.",
+  "RELATABLE — the presenter IS the target viewer, at the same stage of the same struggle, so the viewer thinks 'that's me, they get it' (a still-grinding hustler on grinding; a woman mid-journey on independence).",
+  "AUTHORITY — the presenter visibly embodies the result they teach, so competence is assumed on sight (clearly wealthy on wealth, clearly fit on fitness, a spiritual leader on spiritual values).",
+  "Every persona is a specific, dignified, believable human you'd actually cast — not a trope. Describe appearance, wardrobe, setting, vocal style, and mannerisms concretely enough to render the same person consistently across shots."
+].join("\n");
+
 export const HOOK_STYLES = ["mirror-scene", "direct-analytical", "provocative-question", "confession"] as const;
 
 export function hookStyleDirective(style?: string): string {

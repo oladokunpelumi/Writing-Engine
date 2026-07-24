@@ -823,6 +823,13 @@ export const VideoPersonaInputSchema = z.object({
   visualStyle: z.string().default("")
 });
 
+// A script-matched persona cast along one of three attention angles.
+export const PersonaCastingAngleSchema = z.enum(["contrast", "relatable", "authority"]);
+export const PersonaSuggestionSchema = VideoPersonaInputSchema.extend({
+  angle: PersonaCastingAngleSchema,
+  rationale: z.string().default("")
+});
+
 // Reverse-engineered from a pasted reference video: why it holds attention.
 export const ReferenceBlueprintSchema = z.object({
   hookType: z.string().default(""),
@@ -881,6 +888,8 @@ export type VoiceProfile = z.infer<typeof VoiceProfileSchema>;
 export type GridSignalBlock = z.infer<typeof GridSignalBlockSchema>;
 export type VideoPersona = z.infer<typeof VideoPersonaSchema>;
 export type VideoPersonaInput = z.infer<typeof VideoPersonaInputSchema>;
+export type PersonaCastingAngle = z.infer<typeof PersonaCastingAngleSchema>;
+export type PersonaSuggestion = z.infer<typeof PersonaSuggestionSchema>;
 export type ReferenceBlueprint = z.infer<typeof ReferenceBlueprintSchema>;
 export type VideoScript = z.infer<typeof VideoScriptSchema>;
 export type VideoScriptBeat = z.infer<typeof VideoScriptBeatSchema>;

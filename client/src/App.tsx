@@ -47,6 +47,7 @@ import type {
   VideoPersonaInput,
   VideoProject,
   ReferenceBlueprint,
+  PersonaSuggestion,
   Experiment,
   ExperimentResult,
   GenerationRecord,
@@ -2716,6 +2717,7 @@ function VideoStudioView({
   const [platform, setPlatform] = useState("tiktok");
   const [targetSeconds, setTargetSeconds] = useState(30);
   const [project, setProject] = useState<VideoProject | null>(null);
+  const [casts, setCasts] = useState<PersonaSuggestion[]>([]);
 
   useEffect(() => {
     void api.personas().then(setPersonas).catch(() => undefined);
@@ -2861,6 +2863,54 @@ function VideoStudioView({
               {project.shots.length ? "Rebuild shot list" : "Build Veo shot list"}
             </ActionButton>
           </div>
+        </section>
+      ) : null}
+
+      {project?.script ? (
+        <section className="desk-panel">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div>
+              <h2 className="font-display text-xl font-bold">Cast a persona</h2>
+              <p className="text-sm text-slate-500">Three ways to cast this script so the face itself stops the scroll.</p>
+            </div>
+            <ActionButton icon={<Sparkles size={16} />} disabled={Boolean(busy)} onClick={() => runStep("Casting", () => api.suggestPersonas(project.id), (res) => setCasts(res.suggestions))}>
+              {casts.length ? "Recast" : "Suggest a cast"}
+            </ActionButton>
+          </div>
+          {casts.length ? (
+            <div className="mt-4 grid gap-3 md:grid-cols-3">
+              {casts.map((cast, i) => (
+                <div className="rounded-md border border-slate-200 bg-white p-3" key={i}>
+                  <span className="badge-dusk capitalize">{cast.angle}</span>
+                  <h3 className="mt-2 font-display text-lg font-bold">{cast.name}</h3>
+                  <p className="mt-1 text-xs italic text-slate-500">{cast.rationale}</p>
+                  <dl className="mt-2 grid gap-1 text-xs text-slate-600">
+                    <div><span className="font-semibold">Looks:</span> {cast.appearance}</div>
+                    {cast.wardrobe ? <div><span className="font-semibold">Wears:</span> {cast.wardrobe}</div> : null}
+                    {cast.setting ? <div><span className="font-semibold">Setting:</span> {cast.setting}</div> : null}
+                    {cast.vocalStyle ? <div><span className="font-semibold">Voice:</span> {cast.vocalStyle}</div> : null}
+                  </dl>
+                  <div className="mt-3">
+                    <ActionButton icon={<Save size={16} />} disabled={Boolean(busy)} onClick={() =>
+                      runStep("Saving cast", () => api.createPersona({
+                        name: cast.name,
+                        appearance: cast.appearance ?? "",
+                        wardrobe: cast.wardrobe ?? "",
+                        setting: cast.setting ?? "",
+                        vocalStyle: cast.vocalStyle ?? "",
+                        mannerisms: cast.mannerisms ?? "",
+                        visualStyle: cast.visualStyle ?? ""
+                      }), async (saved) => {
+                        setPersonas(await api.personas());
+                        setPersonaId(saved.id);
+                      })
+                    }>Use this cast</ActionButton>
+                  </div>
+                </div>
+              ))}
+            </div>
+          ) : null}
+          {personaId ? <p className="mt-3 text-xs text-tide">Cast selected — rebuild the shot list to apply it to every shot.</p> : null}
         </section>
       ) : null}
 

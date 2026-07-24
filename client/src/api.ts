@@ -47,6 +47,7 @@ import type {
   VideoScript,
   ShotList,
   ReferenceBlueprint,
+  PersonaSuggestion,
   WorkflowRecipe,
   WorkflowRecipeInput,
   WorkflowRunResponse
@@ -151,6 +152,8 @@ export const api = {
     platform: string;
     targetSeconds: number;
   }) => request<VideoProject>("/api/video/script", { method: "POST", headers: jsonHeaders, body: JSON.stringify(input) }),
+  suggestPersonas: (projectId: string) =>
+    request<{ suggestions: PersonaSuggestion[] }>("/api/video/personas/suggest", { method: "POST", headers: jsonHeaders, body: JSON.stringify({ projectId }) }),
   videoShots: (projectId: string) =>
     request<VideoProject>("/api/video/shots", { method: "POST", headers: jsonHeaders, body: JSON.stringify({ projectId }) }),
   videoStoryboard: (projectId: string) =>

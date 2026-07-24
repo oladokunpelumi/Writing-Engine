@@ -75,7 +75,7 @@ import { extractGraph, gaps as graphGaps, topoOrder, type GraphUnit } from "./co
 import { buildPreviousInputsPreview, combinedCorpusSource, type ImportContent } from "./importPipeline";
 import { applyDistillationToVoice, distillVoice } from "./voiceDistillation";
 import { desireScore, evaluateQuality, headlineScore, hookScore, rewriteSlop, scannabilityScore } from "./quality";
-import { analyzeReference, runVideoScript, runVideoShots } from "./videoStudio";
+import { analyzeReference, runVideoScript, runVideoShots, suggestPersonas } from "./videoStudio";
 import { generateImage } from "./images";
 import { HEADLINE_DOCTRINE, HOOK_DOCTRINE, HOOK_STYLES, hookStyleDirective } from "../../shared/src";
 import { designPartnerReadiness } from "./readiness";
@@ -328,6 +328,22 @@ export function createRouter(repo: Repository) {
       });
       const project = await repo.saveVideoProject({ id: projectId, ...base, reference, script, cost });
       res.json(project);
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  // Cast: suggest one persona per attention angle, matched to the project's script.
+  router.post("/video/personas/suggest", async (req, res, next) => {
+    try {
+      let script;
+      let sourceText = String(req.body?.sourceText ?? "");
+      if (req.body?.projectId) {
+        const project = await repo.getVideoProject(String(req.body.projectId));
+        script = project?.script;
+        sourceText = project?.sourceText ?? sourceText;
+      }
+      res.json({ suggestions: await suggestPersonas({ script, sourceText }) });
     } catch (error) {
       next(error);
     }

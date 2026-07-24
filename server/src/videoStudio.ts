@@ -6,10 +6,11 @@
 // experiments route — so this engine only owns the script/shots structure.
 import {
   ONE_THING_DOCTRINE,
+  PERSONA_CASTING_DOCTRINE,
   UGC_VIDEO_DOCTRINE,
   VEO_PROMPT_DOCTRINE
 } from "../../shared/src";
-import type { ReferenceBlueprint, ShotList, VideoPersona, VideoScript, VideoSourceType } from "../../shared/src";
+import type { PersonaSuggestion, ReferenceBlueprint, ShotList, VideoPersona, VideoScript, VideoSourceType } from "../../shared/src";
 import { aiProvider, modelFor, parseJson, rawChat } from "./openrouter";
 
 function personaBrief(persona?: VideoPersona | null): string {
@@ -47,6 +48,58 @@ export async function analyzeReference(transcript: string): Promise<ReferenceBlu
     temperature: 0.3
   });
   return parseJson<ReferenceBlueprint>(content);
+}
+
+// ---- Cast: suggest one persona per attention angle, matched to the script ----
+export async function suggestPersonas(input: { script?: VideoScript; sourceText: string }): Promise<PersonaSuggestion[]> {
+  const topic = input.script
+    ? [input.script.hook, ...input.script.beats.map((b) => b.spokenLine), input.script.cta].filter(Boolean).join(" ")
+    : input.sourceText;
+  if (aiProvider() === "mock" || !topic.trim()) {
+    return [
+      {
+        angle: "contrast",
+        rationale: "The last person you'd expect to teach this — the incongruity is the hook, the reversal is the proof.",
+        name: "The Reversal",
+        appearance: "40s, warm and weathered, the visible marks of a hard road behind them",
+        wardrobe: "plain, lived-in",
+        setting: "a modest room that quietly shows how far they've come",
+        vocalStyle: "low, unhurried, matter-of-fact",
+        mannerisms: "steady eye contact, small knowing pauses",
+        visualStyle: "grainy handheld selfie, honest natural light"
+      },
+      {
+        angle: "relatable",
+        rationale: "The viewer at their own stage of the same struggle — 'that's me, they get it.'",
+        name: "The Mirror",
+        appearance: "late-20s, tired but determined, mid-journey not arrived",
+        wardrobe: "everyday casual",
+        setting: "a small apartment or car, real and unstaged",
+        vocalStyle: "fast, candid, a little raw",
+        mannerisms: "talks with their hands, quick half-laughs",
+        visualStyle: "vertical phone video, ambient room light"
+      },
+      {
+        angle: "authority",
+        rationale: "Visibly embodies the result, so competence is assumed on sight.",
+        name: "The Proof",
+        appearance: "polished, composed, unmistakably successful at the thing they teach",
+        wardrobe: "sharp, intentional",
+        setting: "a clean, elevated space that signals the outcome",
+        vocalStyle: "calm, precise, confident",
+        mannerisms: "minimal, deliberate gestures",
+        visualStyle: "crisp cinematic selfie, controlled light"
+      }
+    ];
+  }
+  const system = `You cast UGC video presenters.\n\n${PERSONA_CASTING_DOCTRINE}`;
+  const user = [
+    'Return ONLY strict JSON: an array of EXACTLY 3 objects, one per angle in this order — "contrast", "relatable", "authority". Each object: { angle, rationale, name, appearance, wardrobe, setting, vocalStyle, mannerisms, visualStyle }.',
+    "rationale = one line on why this casting stops the scroll. Keep every persona specific, dignified, and believable.",
+    `Script / topic to cast for:\n${topic.slice(0, 3000)}`
+  ].join("\n\n");
+  const { content } = await rawChat({ model: modelFor("video-reference"), system, user, temperature: 0.9 });
+  return parseJson<PersonaSuggestion[]>(content);
 }
 
 // ---- Script: hook → beats → CTA, in the persona's voice ----
