@@ -4,6 +4,7 @@ import {
   CalendarDays,
   ChevronDown,
   ChevronRight,
+  Clapperboard,
   Clipboard,
   Database,
   Download,
@@ -42,6 +43,10 @@ import type {
   ConceptNode,
   DesireReport,
   ScannabilityReport,
+  VideoPersona,
+  VideoPersonaInput,
+  VideoProject,
+  ReferenceBlueprint,
   Experiment,
   ExperimentResult,
   GenerationRecord,
@@ -71,11 +76,11 @@ import { DEFAULT_VOICE_PROFILE } from "../../shared/src";
 import { api, getToken, setToken } from "./api";
 import { brandCopy, polishMoves, type MoveKey } from "./brand";
 
-type Tab = "compose" | "grid" | "experiments" | "graph" | "library" | "import" | "corpus" | "prompts" | "discover" | "voice" | "calendar" | "history";
+type Tab = "compose" | "grid" | "experiments" | "graph" | "library" | "import" | "corpus" | "prompts" | "discover" | "voice" | "calendar" | "history" | "video";
 
 // The advanced engines live behind the "Labs" group in the sidebar; the primary
 // spine is just Create / Library / Voice.
-const LABS_TABS: Tab[] = ["discover", "grid", "experiments", "graph", "calendar", "import", "corpus", "prompts", "history"];
+const LABS_TABS: Tab[] = ["discover", "grid", "video", "experiments", "graph", "calendar", "import", "corpus", "prompts", "history"];
 
 const blankBrief: BriefInput = {
   topic: "",
@@ -132,6 +137,7 @@ export default function App() {
   const [hooks, setHooks] = useState<ExperimentResult[]>([]);
   const [headlines, setHeadlines] = useState<ExperimentResult[]>([]);
   const [scannability, setScannability] = useState<ScannabilityReport | null>(null);
+  const [videoSeedText, setVideoSeedText] = useState("");
   const [retrieved, setRetrieved] = useState<RetrievedPost[]>([]);
   const [citations, setCitations] = useState<CitationFlag[]>([]);
   const [qualityReport, setQualityReport] = useState<QualityReport | null>(null);
@@ -267,6 +273,7 @@ export default function App() {
           <div className="mt-1 grid gap-1 pl-2">
             <NavButton tab="discover" current={tab} setTab={setTabAndClose} icon={<Lightbulb size={16} />} label="Discover" />
             <NavButton tab="grid" current={tab} setTab={setTabAndClose} icon={<Tv size={16} />} label="The Grid" />
+            <NavButton tab="video" current={tab} setTab={setTabAndClose} icon={<Clapperboard size={16} />} label="Video Studio" />
             <NavButton tab="experiments" current={tab} setTab={setTabAndClose} icon={<FlaskConical size={16} />} label="Experiments" />
             <NavButton tab="graph" current={tab} setTab={setTabAndClose} icon={<Network size={16} />} label="Knowledge Graph" />
             <NavButton tab="calendar" current={tab} setTab={setTabAndClose} icon={<CalendarDays size={16} />} label="Calendar" />
@@ -491,6 +498,7 @@ export default function App() {
                 await refresh();
               })}
               onRepurpose={() => runStep("Repurposing", () => api.repurpose(finalForPackage), setRepurpose)}
+              onMakeVideo={() => { setVideoSeedText(finalForPackage); setTab("video"); }}
               desireReport={desireReport}
               onCheckDesire={() => runStep("Checking desire", () => api.desireScore(finalForPackage), setDesireReport)}
               onDesirePass={() => runStep("Desire pass", () => api.desirePass(finalForPackage, draftPostId), async (res) => {
@@ -652,6 +660,7 @@ export default function App() {
             />
           )}
           {tab === "grid" && <GridView runStep={runStep} busy={busy} refresh={refresh} />}
+          {tab === "video" && <VideoStudioView runStep={runStep} busy={busy} posts={posts} seedText={videoSeedText} />}
           {tab === "experiments" && <ExperimentsView runStep={runStep} busy={busy} refresh={refresh} />}
           {tab === "graph" && <GraphView runStep={runStep} busy={busy} />}
           {tab === "history" && <HistoryView generations={generations} />}
@@ -710,6 +719,7 @@ function ComposeView(props: {
   onGenerateHeadlines: () => void;
   onUseHeadline: (title: string) => void;
   onRepurpose: () => void;
+  onMakeVideo: () => void;
   desireReport: DesireReport | null;
   onCheckDesire: () => void;
   onDesirePass: () => void;
@@ -987,6 +997,7 @@ function ComposeView(props: {
               <ActionButton icon={<Download size={16} />} disabled={!props.image && props.sectionImages.length === 0} onClick={props.onCopyIllustrated}>Copy w/ images</ActionButton>
               <ActionButton icon={<Image size={16} />} disabled={!working || Boolean(props.busy)} onClick={props.onPackage}>SEO + cover</ActionButton>
               <ActionButton icon={<Share2 size={16} />} disabled={!working || Boolean(props.busy)} onClick={props.onRepurpose}>Repurpose</ActionButton>
+              <ActionButton icon={<Clapperboard size={16} />} disabled={!working || Boolean(props.busy)} onClick={props.onMakeVideo}>Make a UGC video</ActionButton>
               <a className="btn" href="/api/export/library"><Download size={16} /> Library MD</a>
             </div>
             {props.draftPostId ? <p className="mt-3 text-xs text-tide">Auto-saved as a draft in your Library.</p> : null}
@@ -2674,6 +2685,216 @@ function ScannabilityPanel({
             </div>
           ) : null}
         </div>
+      ) : null}
+    </div>
+  );
+}
+
+// UGC Video Studio (BUILD 2): a piece or product brief → script → Veo shot list
+// → keyframe storyboard, for Google Flow / Veo 3. Gated like The Grid.
+function VideoStudioView({
+  runStep,
+  busy,
+  posts,
+  seedText
+}: {
+  runStep: <T,>(label: string, action: () => Promise<T>, after: (value: T) => void) => Promise<void>;
+  busy: string;
+  posts: Post[];
+  seedText: string;
+}) {
+  const [personas, setPersonas] = useState<VideoPersona[]>([]);
+  const [personaId, setPersonaId] = useState("");
+  const emptyPersona: VideoPersonaInput = { name: "", appearance: "", wardrobe: "", setting: "", vocalStyle: "", mannerisms: "", visualStyle: "" };
+  const [personaForm, setPersonaForm] = useState<VideoPersonaInput>(emptyPersona);
+  const [showEditor, setShowEditor] = useState(false);
+  const [sourceType, setSourceType] = useState<"piece" | "product">("piece");
+  const [sourcePostId, setSourcePostId] = useState("");
+  const [productText, setProductText] = useState("");
+  const [referenceText, setReferenceText] = useState("");
+  const [reference, setReference] = useState<ReferenceBlueprint | null>(null);
+  const [platform, setPlatform] = useState("tiktok");
+  const [targetSeconds, setTargetSeconds] = useState(30);
+  const [project, setProject] = useState<VideoProject | null>(null);
+
+  useEffect(() => {
+    void api.personas().then(setPersonas).catch(() => undefined);
+  }, []);
+  useEffect(() => {
+    if (seedText.trim()) {
+      setSourceType("piece");
+      setSourcePostId("");
+    }
+  }, [seedText]);
+
+  const pieceText = sourcePostId ? posts.find((p) => p.id === sourcePostId)?.body ?? "" : seedText;
+  const sourceText = sourceType === "piece" ? pieceText : productText;
+  const persona = personas.find((p) => p.id === personaId);
+  const copy = (text: string) => navigator.clipboard.writeText(text);
+  const allPrompts = (project?.shots ?? [])
+    .map((s, i) => `SHOT ${i + 1} (~${s.durationSec}s)\n${s.visualPrompt}\n[on-screen: ${s.onScreenText}]`)
+    .join("\n\n———\n\n");
+  const scriptText = project?.script
+    ? [`HOOK: ${project.script.hook}`, ...project.script.beats.map((b, i) => `${i + 1}. ${b.spokenLine}`), `CTA: ${project.script.cta}`].join("\n")
+    : "";
+
+  return (
+    <div className="grid gap-5">
+      <div className="panel-piece">
+        <span className="badge-dusk">Video Studio</span>
+        <h1 className="mt-2 font-display text-2xl font-bold">Turn a piece or a product into a UGC video.</h1>
+        <p className="mt-1 text-sm text-slate-600">Script → Veo shot list → keyframe storyboard, ready to drop into Google Flow.</p>
+      </div>
+
+      <section className="desk-panel grid gap-4">
+        <div className="flex flex-wrap gap-2">
+          <button className={sourceType === "piece" ? "btn" : "rounded-md border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-600"} onClick={() => setSourceType("piece")}>From a piece</button>
+          <button className={sourceType === "product" ? "btn" : "rounded-md border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-600"} onClick={() => setSourceType("product")}>From a product</button>
+        </div>
+        {sourceType === "piece" ? (
+          <label className="block">
+            <span className="label">Source piece</span>
+            <select className="input" value={sourcePostId} onChange={(e) => setSourcePostId(e.target.value)}>
+              <option value="">{seedText.trim() ? "Current piece (from Done)" : "Select a Library piece"}</option>
+              {posts.map((p) => <option key={p.id} value={p.id}>{p.title}</option>)}
+            </select>
+          </label>
+        ) : (
+          <label className="block">
+            <span className="label">Product / app brief</span>
+            <textarea className="input min-h-24" value={productText} placeholder="What is it, who's it for, the one benefit, the CTA…" onChange={(e) => setProductText(e.target.value)} />
+          </label>
+        )}
+
+        <div className="grid gap-2 sm:grid-cols-2">
+          <label className="block">
+            <span className="label">Persona (AI influencer)</span>
+            <select className="input" value={personaId} onChange={(e) => setPersonaId(e.target.value)}>
+              <option value="">No persona</option>
+              {personas.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
+            </select>
+          </label>
+          <div className="flex items-end gap-2">
+            <button className="btn" onClick={() => { setPersonaForm(persona ? { ...persona } : emptyPersona); setShowEditor((v) => !v); }}>
+              <Settings size={14} /> {persona ? "Edit" : "New persona"}
+            </button>
+          </div>
+        </div>
+
+        {showEditor ? (
+          <div className="rounded-md border border-slate-200 bg-white p-3">
+            <Field label="Name" value={personaForm.name} onChange={(v) => setPersonaForm({ ...personaForm, name: v })} />
+            <Field label="Appearance" value={personaForm.appearance ?? ""} onChange={(v) => setPersonaForm({ ...personaForm, appearance: v })} />
+            <Field label="Wardrobe" value={personaForm.wardrobe ?? ""} onChange={(v) => setPersonaForm({ ...personaForm, wardrobe: v })} />
+            <Field label="Setting" value={personaForm.setting ?? ""} onChange={(v) => setPersonaForm({ ...personaForm, setting: v })} />
+            <Field label="Vocal style" value={personaForm.vocalStyle ?? ""} onChange={(v) => setPersonaForm({ ...personaForm, vocalStyle: v })} />
+            <Field label="Mannerisms" value={personaForm.mannerisms ?? ""} onChange={(v) => setPersonaForm({ ...personaForm, mannerisms: v })} />
+            <Field label="Visual style" value={personaForm.visualStyle ?? ""} onChange={(v) => setPersonaForm({ ...personaForm, visualStyle: v })} />
+            <div className="mt-2">
+              <ActionButton icon={<Save size={16} />} disabled={!personaForm.name || Boolean(busy)} onClick={() =>
+                runStep("Saving persona", () => (persona ? api.updatePersona(persona.id, personaForm) : api.createPersona(personaForm)), async (saved) => {
+                  const next = await api.personas();
+                  setPersonas(next);
+                  setPersonaId(saved.id);
+                  setShowEditor(false);
+                })
+              }>Save persona</ActionButton>
+            </div>
+          </div>
+        ) : null}
+
+        <div className="grid gap-2 sm:grid-cols-2">
+          <label className="block">
+            <span className="label">Platform</span>
+            <select className="input" value={platform} onChange={(e) => setPlatform(e.target.value)}>
+              <option value="tiktok">TikTok</option>
+              <option value="reels">Instagram Reels</option>
+              <option value="shorts">YouTube Shorts</option>
+            </select>
+          </label>
+          <label className="block">
+            <span className="label">Target length</span>
+            <select className="input" value={targetSeconds} onChange={(e) => setTargetSeconds(Number(e.target.value))}>
+              {[16, 24, 32, 40, 48].map((s) => <option key={s} value={s}>{s}s</option>)}
+            </select>
+          </label>
+        </div>
+
+        <details className="rounded-md border border-slate-200 bg-white px-3 py-2 text-sm">
+          <summary className="cursor-pointer select-none font-semibold text-slate-700">Model a reference video (optional)</summary>
+          <textarea className="input mt-2 min-h-20" value={referenceText} placeholder="Paste a viral video's transcript or a description of it…" onChange={(e) => setReferenceText(e.target.value)} />
+          <div className="mt-2">
+            <ActionButton icon={<Search size={16} />} disabled={!referenceText.trim() || Boolean(busy)} onClick={() => runStep("Analyzing reference", () => api.videoReference(referenceText), (res) => setReference(res.reference))}>Analyze reference</ActionButton>
+          </div>
+          {reference ? <p className="mt-2 text-xs text-slate-500">Hook: {reference.hookType} · Tone: {reference.tone}</p> : null}
+        </details>
+
+        <div className="border-t border-slate-200 pt-3">
+          <ActionButton icon={<Clapperboard size={16} />} disabled={!sourceText.trim() || Boolean(busy)} onClick={() =>
+            runStep("Writing script", () => api.videoScript({
+              projectId: project?.id,
+              personaId: personaId || undefined,
+              sourceType,
+              sourcePostId: sourcePostId || undefined,
+              sourceText,
+              reference: reference ?? undefined,
+              platform,
+              targetSeconds
+            }), setProject)
+          }>{project?.script ? "Rewrite script" : "Write script"}</ActionButton>
+        </div>
+      </section>
+
+      {project?.script ? (
+        <section className="panel-piece">
+          <div className="flex items-center justify-between gap-2">
+            <h2 className="font-display text-xl font-bold">Script</h2>
+            <button className="btn" onClick={() => copy(scriptText)}><Clipboard size={14} /> Copy script</button>
+          </div>
+          <p className="mt-3 font-bold">{project.script.hook}</p>
+          <ol className="mt-2 grid list-decimal gap-1 pl-5 text-sm text-slate-700">
+            {project.script.beats.map((b, i) => <li key={i}>{b.spokenLine}</li>)}
+          </ol>
+          <p className="mt-2 text-sm text-tide">{project.script.cta}</p>
+          <div className="mt-4">
+            <ActionButton icon={<ListOrdered size={16} />} disabled={Boolean(busy)} onClick={() => runStep("Building shot list", () => api.videoShots(project.id), setProject)}>
+              {project.shots.length ? "Rebuild shot list" : "Build Veo shot list"}
+            </ActionButton>
+          </div>
+        </section>
+      ) : null}
+
+      {project?.shots.length ? (
+        <section className="desk-panel">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <h2 className="font-display text-xl font-bold">Shots ({project.shots.length}) → Flow</h2>
+            <div className="flex gap-2">
+              <button className="btn" onClick={() => copy(allPrompts)}><Clipboard size={14} /> Copy all prompts</button>
+              <ActionButton icon={<Image size={16} />} disabled={Boolean(busy)} onClick={() => runStep("Rendering keyframes", () => api.videoStoryboard(project.id), setProject)}>
+                {project.shots.some((s) => s.keyframeUrl) ? "Re-render keyframes" : "Generate keyframes"}
+              </ActionButton>
+            </div>
+          </div>
+          <div className="mt-4 grid gap-3">
+            {project.shots.map((shot, i) => (
+              <div className="rounded-md border border-slate-200 bg-white p-3" key={i}>
+                <div className="flex gap-3">
+                  {shot.keyframeUrl ? <img className="h-28 w-20 flex-none rounded-md object-cover" src={shot.keyframeUrl} alt={`Shot ${i + 1}`} /> : null}
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="text-xs font-bold uppercase text-slate-500">Shot {i + 1} · ~{shot.durationSec}s</span>
+                      <button className="btn" onClick={() => copy(shot.visualPrompt)}><Clipboard size={14} /> Copy</button>
+                    </div>
+                    <p className="mt-1 text-sm text-slate-700">{shot.visualPrompt}</p>
+                    <p className="mt-1 text-xs text-dusk">🗣 {shot.spokenLine}</p>
+                    {shot.audioCue ? <p className="text-xs text-slate-400">🔊 {shot.audioCue}</p> : null}
+                    {shot.onScreenText ? <p className="text-xs text-slate-400">📝 {shot.onScreenText}</p> : null}
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+        </section>
       ) : null}
     </div>
   );

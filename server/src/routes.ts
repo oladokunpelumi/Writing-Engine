@@ -26,6 +26,8 @@ import {
   QualityRewriteRequestSchema,
   ScheduleInputSchema,
   ShowInputSchema,
+  VideoPersonaInputSchema,
+  VideoProjectInputSchema,
   VisualIdentitySchema,
   VoiceProfileSchema,
   WorkflowRecipeInputSchema,
@@ -37,6 +39,7 @@ import {
   type ScheduleEntry,
   type WorkflowStageResult
 } from "../../shared/src";
+import type { ReferenceBlueprint } from "../../shared/src";
 import type { Repository } from "./repository";
 import { extractCitationFlags } from "./guardrails";
 import { hashPassword, signToken, verifyPassword, verifyToken } from "./auth";
@@ -72,6 +75,8 @@ import { extractGraph, gaps as graphGaps, topoOrder, type GraphUnit } from "./co
 import { buildPreviousInputsPreview, combinedCorpusSource, type ImportContent } from "./importPipeline";
 import { applyDistillationToVoice, distillVoice } from "./voiceDistillation";
 import { desireScore, evaluateQuality, headlineScore, hookScore, rewriteSlop, scannabilityScore } from "./quality";
+import { analyzeReference, runVideoScript, runVideoShots } from "./videoStudio";
+import { generateImage } from "./images";
 import { HEADLINE_DOCTRINE, HOOK_DOCTRINE, HOOK_STYLES, hookStyleDirective } from "../../shared/src";
 import { designPartnerReadiness } from "./readiness";
 
@@ -265,6 +270,118 @@ export function createRouter(repo: Repository) {
   });
   router.delete("/voices/:id", async (req, res) => {
     res.json({ deleted: await repo.deleteVoice(req.params.id) });
+  });
+
+  // ---- Video Studio: personas (reusable AI-influencer identities) ----
+  router.get("/personas", async (_req, res) => res.json(await repo.listPersonas()));
+  router.post("/personas", async (req, res) => {
+    const parsed = VideoPersonaInputSchema.parse(req.body);
+    res.status(201).json(await repo.createPersona(parsed));
+  });
+  router.put("/personas/:id", async (req, res) => {
+    const parsed = VideoPersonaInputSchema.parse(req.body);
+    const updated = await repo.updatePersona(req.params.id, parsed);
+    if (!updated) {
+      res.status(404).json({ error: "Persona not found" });
+      return;
+    }
+    res.json(updated);
+  });
+  router.delete("/personas/:id", async (req, res) => {
+    res.json({ deleted: await repo.deletePersona(req.params.id) });
+  });
+
+  // ---- Video Studio: reference → script → shots → keyframe storyboard ----
+  router.get("/video/projects", async (_req, res) => res.json(await repo.listVideoProjects()));
+  router.get("/video/projects/:id", async (req, res) => {
+    const project = await repo.getVideoProject(req.params.id);
+    if (!project) {
+      res.status(404).json({ error: "Video project not found" });
+      return;
+    }
+    res.json(project);
+  });
+
+  router.post("/video/reference", async (req, res, next) => {
+    try {
+      res.json({ reference: await analyzeReference(String(req.body?.transcript ?? "")) });
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  router.post("/video/script", async (req, res, next) => {
+    try {
+      const base = VideoProjectInputSchema.parse(req.body);
+      const projectId = req.body?.projectId ? String(req.body.projectId) : undefined;
+      const reference = req.body?.reference as ReferenceBlueprint | undefined;
+      const persona = base.personaId ? await repo.getPersona(base.personaId) : undefined;
+      const promptVersion = await repo.getActivePromptVersion("video-script");
+      const { script, cost } = await runVideoScript({
+        sourceText: base.sourceText,
+        sourceType: base.sourceType,
+        persona,
+        blueprint: reference,
+        platform: base.platform,
+        targetSeconds: base.targetSeconds,
+        promptBody: promptVersion?.body
+      });
+      const project = await repo.saveVideoProject({ id: projectId, ...base, reference, script, cost });
+      res.json(project);
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  router.post("/video/shots", async (req, res, next) => {
+    try {
+      const project = await repo.getVideoProject(String(req.body?.projectId ?? ""));
+      if (!project?.script) {
+        res.status(400).json({ error: "Generate a script first" });
+        return;
+      }
+      const persona = project.personaId ? await repo.getPersona(project.personaId) : undefined;
+      const promptVersion = await repo.getActivePromptVersion("video-shots");
+      const { shotList, cost } = await runVideoShots({ script: project.script, persona, platform: project.platform, promptBody: promptVersion?.body });
+      const updated = await repo.saveVideoProject({ id: project.id, shots: shotList.shots, cost: (project.cost ?? 0) + cost });
+      res.json(updated);
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  router.post("/video/storyboard", async (req, res, next) => {
+    try {
+      const project = await repo.getVideoProject(String(req.body?.projectId ?? ""));
+      if (!project?.shots.length) {
+        res.status(400).json({ error: "Generate the shot list first" });
+        return;
+      }
+      const persona = project.personaId ? await repo.getPersona(project.personaId) : undefined;
+      const look = persona
+        ? [persona.appearance, persona.wardrobe, persona.setting, persona.visualStyle].filter(Boolean).join(", ")
+        : "";
+      let extra = 0;
+      const shots = [];
+      for (const shot of project.shots) {
+        const keyframePrompt = `Vertical 9:16 keyframe still for a UGC video shot. ${look ? look + ". " : ""}${shot.visualPrompt}`.slice(0, 1200);
+        const img = await generateImage(keyframePrompt);
+        await recordImageCost(repo, { prompt: keyframePrompt, provider: img.provider, model: img.model, cost: img.cost });
+        const saved = await repo.saveImage({
+          prompt: keyframePrompt,
+          url: img.url,
+          provider: img.provider,
+          role: "keyframe",
+          caption: shot.onScreenText
+        });
+        extra += img.cost ?? 0;
+        shots.push({ ...shot, keyframeUrl: saved.url });
+      }
+      const updated = await repo.saveVideoProject({ id: project.id, shots, cost: (project.cost ?? 0) + extra });
+      res.json(updated);
+    } catch (error) {
+      next(error);
+    }
   });
 
   // ---- Shows / content lines ----

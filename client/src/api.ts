@@ -41,6 +41,12 @@ import type {
   VisualIdentity,
   VoiceDistillation,
   VoiceProfile,
+  VideoPersona,
+  VideoPersonaInput,
+  VideoProject,
+  VideoScript,
+  ShotList,
+  ReferenceBlueprint,
   WorkflowRecipe,
   WorkflowRecipeInput,
   WorkflowRunResponse
@@ -126,6 +132,29 @@ export const api = {
   setActiveVoice: (id: string) =>
     request<VoiceProfile>("/api/voices/active", { method: "PUT", headers: jsonHeaders, body: JSON.stringify({ id }) }),
   deleteVoice: (id: string) => request<{ deleted: boolean }>(`/api/voices/${id}`, { method: "DELETE" }),
+  personas: () => request<VideoPersona[]>("/api/personas"),
+  createPersona: (persona: VideoPersonaInput) =>
+    request<VideoPersona>("/api/personas", { method: "POST", headers: jsonHeaders, body: JSON.stringify(persona) }),
+  updatePersona: (id: string, persona: VideoPersonaInput) =>
+    request<VideoPersona>(`/api/personas/${id}`, { method: "PUT", headers: jsonHeaders, body: JSON.stringify(persona) }),
+  deletePersona: (id: string) => request<{ deleted: boolean }>(`/api/personas/${id}`, { method: "DELETE" }),
+  videoProjects: () => request<VideoProject[]>("/api/video/projects"),
+  videoReference: (transcript: string) =>
+    request<{ reference: ReferenceBlueprint }>("/api/video/reference", { method: "POST", headers: jsonHeaders, body: JSON.stringify({ transcript }) }),
+  videoScript: (input: {
+    projectId?: string;
+    personaId?: string;
+    sourceType: "piece" | "product";
+    sourcePostId?: string;
+    sourceText: string;
+    reference?: ReferenceBlueprint;
+    platform: string;
+    targetSeconds: number;
+  }) => request<VideoProject>("/api/video/script", { method: "POST", headers: jsonHeaders, body: JSON.stringify(input) }),
+  videoShots: (projectId: string) =>
+    request<VideoProject>("/api/video/shots", { method: "POST", headers: jsonHeaders, body: JSON.stringify({ projectId }) }),
+  videoStoryboard: (projectId: string) =>
+    request<VideoProject>("/api/video/storyboard", { method: "POST", headers: jsonHeaders, body: JSON.stringify({ projectId }) }),
   shows: () => request<{ shows: Show[]; activeShow: Show }>("/api/shows"),
   createShow: (input: ShowInput) =>
     request<Show>("/api/shows", { method: "POST", headers: jsonHeaders, body: JSON.stringify(input) }),

@@ -30,7 +30,10 @@ const modelEnv: Partial<Record<PromptStage, string>> = {
   reviewgate: "MODEL_REVIEWGATE",
   story: "MODEL_STORY",
   critic: "MODEL_CRITIC",
-  "study-skill": "MODEL_STUDY_SKILL"
+  "study-skill": "MODEL_STUDY_SKILL",
+  "video-reference": "MODEL_VIDEO_REFERENCE",
+  "video-script": "MODEL_VIDEO_SCRIPT",
+  "video-shots": "MODEL_VIDEO_SHOTS"
 };
 
 type ModelProfile = "cost-first" | "balanced" | "premium";
@@ -52,7 +55,10 @@ const modelProfiles: Record<ModelProfile, Partial<Record<PromptStage, string>>> 
     reviewgate: "z-ai/glm-5.2",
     story: "z-ai/glm-5.2",
     critic: "z-ai/glm-5.2",
-    "study-skill": "google/gemini-3.1-flash-lite"
+    "study-skill": "google/gemini-3.1-flash-lite",
+    "video-reference": "google/gemini-3.1-flash-lite",
+    "video-script": "z-ai/glm-5.2",
+    "video-shots": "google/gemini-3.1-flash-lite"
   },
   balanced: {
     frame: "z-ai/glm-5.2",
@@ -70,7 +76,10 @@ const modelProfiles: Record<ModelProfile, Partial<Record<PromptStage, string>>> 
     reviewgate: "z-ai/glm-5.2",
     story: "anthropic/claude-sonnet-4.6",
     critic: "anthropic/claude-sonnet-4.6",
-    "study-skill": "google/gemini-3.1-flash-lite"
+    "study-skill": "google/gemini-3.1-flash-lite",
+    "video-reference": "google/gemini-3.1-flash-lite",
+    "video-script": "anthropic/claude-sonnet-4.6",
+    "video-shots": "google/gemini-3.1-flash-lite"
   },
   premium: {
     frame: "anthropic/claude-sonnet-4.6",
@@ -88,7 +97,10 @@ const modelProfiles: Record<ModelProfile, Partial<Record<PromptStage, string>>> 
     reviewgate: "anthropic/claude-sonnet-4.6",
     story: "anthropic/claude-opus-4.8",
     critic: "anthropic/claude-opus-4.8",
-    "study-skill": "anthropic/claude-sonnet-4.6"
+    "study-skill": "anthropic/claude-sonnet-4.6",
+    "video-reference": "google/gemini-3.1-flash-lite",
+    "video-script": "anthropic/claude-sonnet-4.6",
+    "video-shots": "z-ai/glm-5.2"
   }
 };
 
@@ -190,7 +202,7 @@ export function sharpenPrompt(draft: string, promptVersion?: PromptVersion) {
 
 // Models sometimes wrap JSON in ```json fences or add prose around it. Strip the
 // fence and fall back to the first {...} / [...] block so structured calls are robust.
-function parseJson<T>(content: string): T {
+export function parseJson<T>(content: string): T {
   const unfenced = content.replace(/```(?:json)?/gi, "").trim();
   try {
     return JSON.parse(unfenced) as T;

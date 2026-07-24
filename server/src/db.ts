@@ -399,6 +399,32 @@ async function migrate(db: AppDatabase) {
       created_at text NOT NULL
     );
 
+    CREATE TABLE IF NOT EXISTS video_personas (
+      id text PRIMARY KEY,
+      owner_id text NOT NULL DEFAULT 'owner-default',
+      name text NOT NULL,
+      profile text NOT NULL,
+      created_at text NOT NULL,
+      updated_at text NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS video_projects (
+      id text PRIMARY KEY,
+      owner_id text NOT NULL DEFAULT 'owner-default',
+      persona_id text,
+      source_type text NOT NULL DEFAULT 'piece',
+      source_post_id text,
+      source_text text NOT NULL DEFAULT '',
+      reference text,
+      platform text NOT NULL DEFAULT 'tiktok',
+      target_seconds integer NOT NULL DEFAULT 30,
+      script text,
+      shots text,
+      cost double precision,
+      created_at text NOT NULL,
+      updated_at text NOT NULL
+    );
+
     CREATE TABLE IF NOT EXISTS territories (
       id text PRIMARY KEY,
       owner_id text NOT NULL DEFAULT 'owner-default',

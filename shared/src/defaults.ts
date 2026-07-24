@@ -133,6 +133,30 @@ export const ONE_THING_DOCTRINE = [
   "State the one thing plainly enough that a reader could repeat it back in a single sentence."
 ].join("\n");
 
+// ---- BUILD 2: UGC Video Studio doctrines ----
+// Short-form UGC craft. Reuses BUILD 1's shared primitives: the one through-line
+// is ONE_THING_DOCTRINE; the spoken hook is generated + scored by the shared
+// Headline/Hook Lab (video-hook mode). This covers what is video-specific.
+export const UGC_VIDEO_DOCTRINE = [
+  "Talk to camera like a real person, not an ad. Authentic, specific, a little imperfect beats polished and generic.",
+  "The first ~1.5 seconds decide everything: open on the hook — a pattern interrupt, a bold claim, or the exact moment the viewer recognizes themselves. Never a slow intro or 'hey guys'.",
+  "Hold ONE through-line the whole way (see the one-thing doctrine). Every beat earns the next by opening a small loop and paying it off; cut anything that doesn't move the viewer forward.",
+  "Vary the energy — a beat of tension, a beat of relief. Concrete over abstract; show the thing, don't describe it.",
+  "End on a single clear call to action the viewer can act on in one tap.",
+  "Match the platform: vertical 9:16, fast cuts, spoken lines short enough to say in one breath."
+].join("\n");
+
+// Google Flow / Veo 3 prompt anatomy. Veo renders native audio (the spoken line
+// becomes dialogue) in ~8s clips; the generated keyframe still is used as a Flow
+// "ingredient" so the persona stays identical across shots.
+export const VEO_PROMPT_DOCTRINE = [
+  "Write each shot as a Veo 3 prompt with this anatomy: SUBJECT (who, exact look) · ACTION (what they do) · SETTING · CAMERA (angle + movement, e.g. handheld selfie, slow push-in) · LIGHTING · MOOD · STYLE · AUDIO.",
+  "Put the spoken line in the AUDIO as dialogue in quotes so Veo speaks it in the persona's voice; add ambient/SFX cues where they help.",
+  "Each clip is ~8 seconds — one beat per shot. Keep the described action doable in 8 seconds.",
+  "CONSISTENCY is everything: describe the persona (face, hair, wardrobe), the setting, and the lighting IDENTICALLY in every shot so the clips cut together as one person in one world. The generated keyframe still is the reference 'ingredient' that locks the look.",
+  "Be cinematic and concrete; do not put on-screen caption instructions inside the video prompt (captions are handled separately)."
+].join("\n");
+
 export const HOOK_STYLES = ["mirror-scene", "direct-analytical", "provocative-question", "confession"] as const;
 
 export function hookStyleDirective(style?: string): string {
@@ -252,6 +276,30 @@ export const DEFAULT_PROMPT_TEMPLATES: PromptTemplateInput[] = [
     notes: "Adapted from transitive-learning (optimize the skill, not the graph)",
     body:
       "You are a systems trainer, not a content tutor. Given the concept graph (reading order + gaps) and the learner's goal below, design a short session: pick the next 2–4 concepts to tackle in prerequisite order, state the competency gate for each ('I can ...'), name one transfer task, and flag any uncovered prerequisite to shore up first. Prioritize transformation over coverage; taste over completeness; treat error as feedback. Be concrete and brief."
+  },
+  {
+    stage: "video-reference",
+    name: "Video: reference blueprint",
+    description: "Reverse-engineers why a pasted reference video holds attention.",
+    notes: "UGC Video Studio (BUILD 2)",
+    body:
+      "Analyze the reference video transcript/description. Return ONLY strict JSON: { hookType, structure: string[], pacingNotes, tone, retentionTactics: string[] }. Name the hook type, the beat-by-beat structure, how it paces attention, its tone, and the specific retention tactics it uses. Do not copy its content — capture its shape."
+  },
+  {
+    stage: "video-script",
+    name: "Video: UGC script",
+    description: "Writes a short-form spoken script (hook → beats → CTA) from a piece or product.",
+    notes: "UGC Video Studio (BUILD 2)",
+    body:
+      "Write a short-form UGC video script in the persona's voice. Return ONLY strict JSON: { hook, beats: [{ idea, spokenLine }], cta, totalSeconds }. One through-line the whole way; the hook earns the first 1.5s; each beat's spokenLine is short enough to say in one breath; end on one clear CTA."
+  },
+  {
+    stage: "video-shots",
+    name: "Video: Veo shot list",
+    description: "Turns a script into one ~8s Veo 3 shot per beat, sharing a persona/look.",
+    notes: "UGC Video Studio (BUILD 2)",
+    body:
+      "Turn the script into a shot list for Google Flow / Veo 3. Return ONLY strict JSON: { shots: [{ index, spokenLine, visualPrompt, audioCue, onScreenText, durationSec }] }. One shot per beat, ~8s each. Each visualPrompt uses Veo anatomy (subject·action·setting·camera·lighting·mood·style·audio) and describes the persona IDENTICALLY every shot for consistency; put the spoken line in the audio as quoted dialogue."
   }
 ];
 

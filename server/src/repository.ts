@@ -39,7 +39,11 @@ import type {
   WorkflowRecipeInput,
   WorkflowRecipePreview,
   UsageLimit,
-  UsageStatus
+  UsageStatus,
+  VideoPersona,
+  VideoPersonaInput,
+  VideoProject,
+  VideoShot
 } from "../../shared/src";
 import { DEFAULT_PROMPT_TEMPLATES, DEFAULT_VOICE_PROFILE, DEFAULT_WORKFLOW_RECIPES, STARTER_VOICE_PROFILE } from "../../shared/src";
 import { GRID_PROMPT_TEMPLATES, GRID_RECIPE, GRID_VOICE_PROFILE } from "./gridContent";
@@ -84,7 +88,9 @@ const OWNER_TABLES = [
   "territories",
   "usage_limits",
   "activation_events",
-  "partner_feedback"
+  "partner_feedback",
+  "video_personas",
+  "video_projects"
 ];
 
 export class Repository {
@@ -615,6 +621,144 @@ export class Repository {
       )
       .run(id, this.owner, input.postId ?? null, json(input.tweetThread), input.linkedinPost, input.newsletterTeaser, createdAt);
     return { id, createdAt };
+  }
+
+  // ---- Video Studio: personas (reusable AI-influencer identities) ----
+  private rowToPersona(row: Record<string, unknown>): VideoPersona {
+    const profile = parse<Omit<VideoPersona, "id" | "name" | "createdAt" | "updatedAt">>(String(row.profile), {
+      appearance: "",
+      wardrobe: "",
+      setting: "",
+      vocalStyle: "",
+      mannerisms: "",
+      visualStyle: ""
+    });
+    return {
+      id: String(row.id),
+      name: String(row.name),
+      appearance: profile.appearance ?? "",
+      wardrobe: profile.wardrobe ?? "",
+      setting: profile.setting ?? "",
+      vocalStyle: profile.vocalStyle ?? "",
+      mannerisms: profile.mannerisms ?? "",
+      visualStyle: profile.visualStyle ?? "",
+      createdAt: String(row.created_at),
+      updatedAt: String(row.updated_at)
+    };
+  }
+
+  async listPersonas(): Promise<VideoPersona[]> {
+    return (await this.db.prepare("SELECT * FROM video_personas WHERE owner_id = ? ORDER BY created_at ASC").all(this.owner)).map((row) =>
+      this.rowToPersona(row)
+    );
+  }
+
+  async getPersona(id: string): Promise<VideoPersona | undefined> {
+    const row = await this.db.prepare("SELECT * FROM video_personas WHERE id = ? AND owner_id = ?").get(id, this.owner);
+    return row ? this.rowToPersona(row) : undefined;
+  }
+
+  async createPersona(input: VideoPersonaInput): Promise<VideoPersona> {
+    const id = randomUUID();
+    const ts = now();
+    const { name, ...profile } = input;
+    await this.db
+      .prepare("INSERT INTO video_personas (id, owner_id, name, profile, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)")
+      .run(id, this.owner, name, json(profile), ts, ts);
+    return (await this.getPersona(id))!;
+  }
+
+  async updatePersona(id: string, input: VideoPersonaInput): Promise<VideoPersona | undefined> {
+    if (!(await this.getPersona(id))) return undefined;
+    const { name, ...profile } = input;
+    await this.db
+      .prepare("UPDATE video_personas SET name = ?, profile = ?, updated_at = ? WHERE id = ? AND owner_id = ?")
+      .run(name, json(profile), now(), id, this.owner);
+    return this.getPersona(id);
+  }
+
+  async deletePersona(id: string): Promise<boolean> {
+    const rows = await this.db.prepare("DELETE FROM video_personas WHERE id = ? AND owner_id = ? RETURNING id").all(id, this.owner);
+    return rows.length > 0;
+  }
+
+  // ---- Video Studio: projects (script + shots + keyframes for one video) ----
+  private rowToVideoProject(row: Record<string, unknown>): VideoProject {
+    return {
+      id: String(row.id),
+      personaId: row.persona_id ? String(row.persona_id) : undefined,
+      sourceType: (String(row.source_type) === "product" ? "product" : "piece"),
+      sourcePostId: row.source_post_id ? String(row.source_post_id) : undefined,
+      sourceText: String(row.source_text ?? ""),
+      reference: row.reference ? parse<VideoProject["reference"]>(String(row.reference), undefined as never) : undefined,
+      platform: String(row.platform ?? "tiktok"),
+      targetSeconds: Number(row.target_seconds ?? 30),
+      script: row.script ? parse<VideoProject["script"]>(String(row.script), undefined as never) : undefined,
+      shots: row.shots ? parse<VideoShot[]>(String(row.shots), []) : [],
+      cost: row.cost === null || row.cost === undefined ? undefined : Number(row.cost),
+      createdAt: String(row.created_at),
+      updatedAt: String(row.updated_at)
+    };
+  }
+
+  async listVideoProjects(): Promise<VideoProject[]> {
+    return (await this.db.prepare("SELECT * FROM video_projects WHERE owner_id = ? ORDER BY created_at DESC").all(this.owner)).map((row) =>
+      this.rowToVideoProject(row)
+    );
+  }
+
+  async getVideoProject(id: string): Promise<VideoProject | undefined> {
+    const row = await this.db.prepare("SELECT * FROM video_projects WHERE id = ? AND owner_id = ?").get(id, this.owner);
+    return row ? this.rowToVideoProject(row) : undefined;
+  }
+
+  // Create-or-update a video project in place (like upsertDraft for the living draft).
+  async saveVideoProject(input: Partial<VideoProject> & { id?: string }): Promise<VideoProject> {
+    const existing = input.id ? await this.getVideoProject(input.id) : undefined;
+    const id = existing?.id ?? randomUUID();
+    const ts = now();
+    const merged: VideoProject = {
+      id,
+      personaId: input.personaId ?? existing?.personaId,
+      sourceType: input.sourceType ?? existing?.sourceType ?? "piece",
+      sourcePostId: input.sourcePostId ?? existing?.sourcePostId,
+      sourceText: input.sourceText ?? existing?.sourceText ?? "",
+      reference: input.reference ?? existing?.reference,
+      platform: input.platform ?? existing?.platform ?? "tiktok",
+      targetSeconds: input.targetSeconds ?? existing?.targetSeconds ?? 30,
+      script: input.script ?? existing?.script,
+      shots: input.shots ?? existing?.shots ?? [],
+      cost: input.cost ?? existing?.cost,
+      createdAt: existing?.createdAt ?? ts,
+      updatedAt: ts
+    };
+    await this.db
+      .prepare(
+        `INSERT INTO video_projects (id, owner_id, persona_id, source_type, source_post_id, source_text, reference, platform, target_seconds, script, shots, cost, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT (id) DO UPDATE SET
+          persona_id=EXCLUDED.persona_id, source_type=EXCLUDED.source_type, source_post_id=EXCLUDED.source_post_id,
+          source_text=EXCLUDED.source_text, reference=EXCLUDED.reference, platform=EXCLUDED.platform,
+          target_seconds=EXCLUDED.target_seconds, script=EXCLUDED.script, shots=EXCLUDED.shots,
+          cost=EXCLUDED.cost, updated_at=EXCLUDED.updated_at`
+      )
+      .run(
+        merged.id,
+        this.owner,
+        merged.personaId ?? null,
+        merged.sourceType,
+        merged.sourcePostId ?? null,
+        merged.sourceText,
+        merged.reference ? json(merged.reference) : null,
+        merged.platform,
+        merged.targetSeconds,
+        merged.script ? json(merged.script) : null,
+        merged.shots.length ? json(merged.shots) : null,
+        merged.cost ?? null,
+        merged.createdAt,
+        merged.updatedAt
+      );
+    return merged;
   }
 
   // Assign a chronological "start here" reading order (oldest = 1) across all posts.

@@ -61,7 +61,10 @@ export const PromptStageSchema = z.enum([
   "reviewgate",
   "story",
   "critic",
-  "study-skill"
+  "study-skill",
+  "video-reference",
+  "video-script",
+  "video-shots"
 ]);
 
 export const PostSchema = z.object({
@@ -224,7 +227,7 @@ export const ImageAssetSchema = z.object({
   prompt: z.string(),
   url: z.string(),
   provider: z.enum(["mock", "openrouter"]),
-  role: z.enum(["cover", "section"]).optional(),
+  role: z.enum(["cover", "section", "keyframe"]).optional(),
   style: z.string().optional(),
   caption: z.string().optional(),
   createdAt: isoDate
@@ -795,8 +798,97 @@ export const ExperimentSchema = z.object({
   createdAt: isoDate
 });
 
+// ---- BUILD 2: UGC Video Studio ----
+// A reusable AI-influencer persona (look + voice + mannerisms), stored per owner
+// like a voice profile, so a series of videos stays one consistent creator.
+export const VideoPersonaSchema = z.object({
+  id: z.string(),
+  name: z.string(),
+  appearance: z.string().default(""),
+  wardrobe: z.string().default(""),
+  setting: z.string().default(""),
+  vocalStyle: z.string().default(""),
+  mannerisms: z.string().default(""),
+  visualStyle: z.string().default(""),
+  createdAt: isoDate,
+  updatedAt: isoDate
+});
+export const VideoPersonaInputSchema = z.object({
+  name: z.string(),
+  appearance: z.string().default(""),
+  wardrobe: z.string().default(""),
+  setting: z.string().default(""),
+  vocalStyle: z.string().default(""),
+  mannerisms: z.string().default(""),
+  visualStyle: z.string().default("")
+});
+
+// Reverse-engineered from a pasted reference video: why it holds attention.
+export const ReferenceBlueprintSchema = z.object({
+  hookType: z.string().default(""),
+  structure: z.array(z.string()).default([]),
+  pacingNotes: z.string().default(""),
+  tone: z.string().default(""),
+  retentionTactics: z.array(z.string()).default([])
+});
+
+export const VideoScriptBeatSchema = z.object({ idea: z.string(), spokenLine: z.string() });
+export const VideoScriptSchema = z.object({
+  hook: z.string(),
+  beats: z.array(VideoScriptBeatSchema).default([]),
+  cta: z.string().default(""),
+  totalSeconds: z.number().optional()
+});
+
+// One ~8s Veo shot = one script beat: the spoken line + a Veo-ready visual prompt.
+export const VideoShotSchema = z.object({
+  index: z.number(),
+  spokenLine: z.string().default(""),
+  visualPrompt: z.string(),
+  audioCue: z.string().default(""),
+  onScreenText: z.string().default(""),
+  durationSec: z.number().default(8),
+  keyframeUrl: z.string().optional()
+});
+export const ShotListSchema = z.object({ shots: z.array(VideoShotSchema).default([]) });
+
+export const VideoSourceTypeSchema = z.enum(["piece", "product"]);
+export const VideoProjectSchema = z.object({
+  id: z.string(),
+  personaId: z.string().optional(),
+  sourceType: VideoSourceTypeSchema.default("piece"),
+  sourcePostId: z.string().optional(),
+  sourceText: z.string().default(""),
+  reference: ReferenceBlueprintSchema.optional(),
+  platform: z.string().default("tiktok"),
+  targetSeconds: z.number().default(30),
+  script: VideoScriptSchema.optional(),
+  shots: z.array(VideoShotSchema).default([]),
+  cost: z.number().optional(),
+  createdAt: isoDate,
+  updatedAt: isoDate
+});
+export const VideoProjectInputSchema = z.object({
+  personaId: z.string().optional(),
+  sourceType: VideoSourceTypeSchema.default("piece"),
+  sourcePostId: z.string().optional(),
+  sourceText: z.string().default(""),
+  platform: z.string().default("tiktok"),
+  targetSeconds: z.number().default(30)
+});
+
 export type VoiceProfile = z.infer<typeof VoiceProfileSchema>;
 export type GridSignalBlock = z.infer<typeof GridSignalBlockSchema>;
+export type VideoPersona = z.infer<typeof VideoPersonaSchema>;
+export type VideoPersonaInput = z.infer<typeof VideoPersonaInputSchema>;
+export type ReferenceBlueprint = z.infer<typeof ReferenceBlueprintSchema>;
+export type VideoScript = z.infer<typeof VideoScriptSchema>;
+export type VideoScriptBeat = z.infer<typeof VideoScriptBeatSchema>;
+export type VideoShot = z.infer<typeof VideoShotSchema>;
+export type ShotList = z.infer<typeof ShotListSchema>;
+export type VideoProject = z.infer<typeof VideoProjectSchema>;
+export type VideoProjectInput = z.infer<typeof VideoProjectInputSchema>;
+export type VideoSourceType = z.infer<typeof VideoSourceTypeSchema>;
 export type GridContinuity = z.infer<typeof GridContinuitySchema>;
 export type GridSignalsRequest = z.infer<typeof GridSignalsRequestSchema>;
 export type GridSynthesisRequest = z.infer<typeof GridSynthesisRequestSchema>;
