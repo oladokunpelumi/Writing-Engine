@@ -8,6 +8,8 @@ import type {
   ConceptNode,
   DesirePassResponse,
   DesireReport,
+  ScannabilityReport,
+  ScannabilityPassResponse,
   Experiment,
   ExperimentResult,
   GenerationResponse,
@@ -184,10 +186,26 @@ export const api = {
     }),
   hookScore: (text: string) =>
     request<{ score: number; reasons: string[] }>("/api/hook/score", { method: "POST", headers: jsonHeaders, body: JSON.stringify({ text }) }),
+  runHeadlines: (text: string, n = 8) =>
+    request<{ experiment: Experiment; ranked: ExperimentResult[]; cost?: number }>("/api/experiments/run", {
+      method: "POST",
+      headers: jsonHeaders,
+      body: JSON.stringify({ kind: "headline", text, n })
+    }),
+  headlineScore: (text: string) =>
+    request<{ score: number; reasons: string[] }>("/api/headline/score", { method: "POST", headers: jsonHeaders, body: JSON.stringify({ text }) }),
   desireScore: (text: string) =>
     request<DesireReport>("/api/desire/score", { method: "POST", headers: jsonHeaders, body: JSON.stringify({ text }) }),
   desirePass: (text: string, draftPostId?: string) =>
     request<DesirePassResponse>("/api/generate/desire-pass", {
+      method: "POST",
+      headers: jsonHeaders,
+      body: JSON.stringify({ text, draftPostId })
+    }),
+  scannabilityScore: (text: string) =>
+    request<ScannabilityReport>("/api/scannability/score", { method: "POST", headers: jsonHeaders, body: JSON.stringify({ text }) }),
+  scannabilityPass: (text: string, draftPostId?: string) =>
+    request<ScannabilityPassResponse>("/api/generate/scannability-pass", {
       method: "POST",
       headers: jsonHeaders,
       body: JSON.stringify({ text, draftPostId })

@@ -136,7 +136,10 @@ export function mockDiscover(posts: Post[], limit: number): Omit<TopicIdea, "id"
     title: `A deeper cut of ${post.title}`,
     angle: "Return to the original insight and press on the counterargument the first piece left implicit.",
     rationale: "The archive already contains the seed; this turns it into compounding thought.",
-    sourcePostId: post.id
+    sourcePostId: post.id,
+    writingType: "opinion",
+    ideaCategory: "lesson",
+    whyMe: "opinion"
   }));
   const newIdeas = [
     {
@@ -145,7 +148,10 @@ export function mockDiscover(posts: Post[], limit: number): Omit<TopicIdea, "id"
       angle: "A faith-and-writing piece on sincerity, status, and the temptation to sound profound.",
       rationale: "Opens the arc: name the temptation before prescribing the cure.",
       series: "Sincerity over status",
-      seriesOrder: 1
+      seriesOrder: 1,
+      writingType: "story",
+      ideaCategory: "mistake",
+      whyMe: "expert"
     },
     {
       type: "new" as const,

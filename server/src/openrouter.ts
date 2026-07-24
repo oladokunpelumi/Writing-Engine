@@ -8,7 +8,7 @@ import type {
   Usage,
   VoiceProfile
 } from "../../shared/src";
-import { DESIRE_DOCTRINE, HOOK_DOCTRINE, REFINE_PROMPT_BODY, hookStyleDirective } from "../../shared/src";
+import { DESIRE_DOCTRINE, HOOK_DOCTRINE, ONE_THING_DOCTRINE, REFINE_PROMPT_BODY, hookStyleDirective } from "../../shared/src";
 import { extractCitationFlags, guardrailPrompt } from "./guardrails";
 import { mockDiscover, mockDraft, mockFrame, mockRefine, mockRepurpose, mockSeo, mockSharpen, mockStage } from "./mockAi";
 import { generateImage, imageStyleDirective, VISUAL_CONCEPT_SYSTEM } from "./images";
@@ -140,8 +140,10 @@ function fusionTool() {
 export function framePrompt(brief: BriefInput, promptVersion?: PromptVersion) {
   return [
     promptVersion?.body ?? "Turn this brief into a structured frame. Do not write the post.",
+    "Include a 'The one thing:' line: the single controlling idea of the piece, in one sentence.",
     "Include a 'Cold open' line: the specific recognition scene/feeling the post should lead with so the reader sees themselves first.",
     "Include a 'Driving want' line: the central desire that pulls the piece forward (who wants what, and what's in the way).",
+    ONE_THING_DOCTRINE,
     HOOK_DOCTRINE,
     hookStyleDirective(brief.hookStyle),
     DESIRE_DOCTRINE,
@@ -163,6 +165,7 @@ export function draftPrompt(
   const motifGuidance = motifs.length > 0 ? `Weave the author's recurring motifs where they fit, never forced: ${motifs.join(", ")}.` : "";
   return [
     promptVersion?.body ?? "Draft a complete post from this frame and brief. Use retrieved memory for calibration only; do not copy it.",
+    ONE_THING_DOCTRINE,
     HOOK_DOCTRINE,
     hookStyleDirective(brief.hookStyle),
     DESIRE_DOCTRINE,
@@ -351,6 +354,36 @@ export async function runDesirePass(
   return openrouterResponse(content, modelFor("refine"), promptVersion, usage);
 }
 
+// Scannability pass (Cole's "rate of revelation"): an incremental edit that makes
+// a piece respect the scroll — shorten the first sentence, break walls of text,
+// add subheadings, vary rhythm — touching only the flagged spots. Reuses the
+// cheap refine model. Offline → returns the text unchanged so the flow works.
+export async function runScannabilityPass(
+  text: string,
+  voice: VoiceProfile,
+  flagExcerpts: string[],
+  promptVersion?: PromptVersion
+): Promise<GenerationResponse> {
+  if (!process.env.OPENROUTER_API_KEY) {
+    return mockResponse(text, "mock-scannability-pass", promptVersion);
+  }
+  const system = systemPrompt(voice);
+  const targets =
+    flagExcerpts.length > 0
+      ? `These spots hurt scannability — fix each without changing the meaning:\n${flagExcerpts
+          .map((excerpt, i) => `${i + 1}. ${excerpt}`)
+          .join("\n")}`
+      : "Sweep the whole piece for anything that slows the scroll.";
+  const user = [
+    promptVersion?.body ??
+      "Revise the piece to respect the scroll: a short, clear first sentence; short signposting subheadings where a long piece needs them; walls of text broken into shorter paragraphs; sentence lengths varied (short punches beside longer lines); the point front-loaded, not buried. Make INCREMENTAL edits — keep the ideas, argument, and voice intact; do not rewrite for the sake of it. Return the full revised piece.",
+    targets,
+    `Piece:\n${text}`
+  ].join("\n\n");
+  const { content, usage } = await chat(modelFor("refine"), system, user, "refine");
+  return openrouterResponse(content, modelFor("refine"), promptVersion, usage);
+}
+
 // Generic runner for arbitrary workflow stages (research-explainer, deep-analysis,
 // synthesis-article, visual-prompt, …). The previous stage's output is threaded
 // in as `input`; the first generative stage also receives retrieved memory.
@@ -401,7 +434,8 @@ export async function runDiscover(posts: Post[], voice: VoiceProfile, limit: num
     .join("\n\n---\n\n");
   const system = [
     promptVersion?.body ?? "Read the archive index and voice profile and propose topics.",
-    "Return ONLY a strict JSON array. Each item: { type: 'new'|'expand', title, angle, rationale, sourcePostId?, series?, seriesOrder? }.",
+    "Return ONLY a strict JSON array. Each item: { type: 'new'|'expand', title, angle, rationale, sourcePostId?, series?, seriesOrder?, writingType?, ideaCategory?, whyMe? }.",
+    "For each idea also set: writingType ('guide'|'opinion'|'list'|'story'|'credibility'), ideaCategory ('explanation'|'habit'|'mistake'|'lesson'|'tip'|'story'|'timely'), and whyMe ('expert'|'talked-to-experts'|'opinion') — the writing form, the idea's category, and the author's authority angle for it.",
     "Cluster related proposals into 1-3 named series (set the same `series` name and an integer `seriesOrder` starting at 1) that each carry a through-line; leave standalone ideas without a series."
   ].join("\n");
   const { content } = await chat(

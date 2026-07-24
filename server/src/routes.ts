@@ -50,6 +50,7 @@ import {
   modelProfile,
   modelFor,
   runDesirePass,
+  runScannabilityPass,
   runDiscover,
   runDraft,
   runFrame,
@@ -70,8 +71,8 @@ import { runSwarm, scoreDrafts, spreadVariants, swarmCost, swarmModel, type Swar
 import { extractGraph, gaps as graphGaps, topoOrder, type GraphUnit } from "./conceptGraph";
 import { buildPreviousInputsPreview, combinedCorpusSource, type ImportContent } from "./importPipeline";
 import { applyDistillationToVoice, distillVoice } from "./voiceDistillation";
-import { desireScore, evaluateQuality, hookScore, rewriteSlop } from "./quality";
-import { HOOK_DOCTRINE, HOOK_STYLES, hookStyleDirective } from "../../shared/src";
+import { desireScore, evaluateQuality, headlineScore, hookScore, rewriteSlop, scannabilityScore } from "./quality";
+import { HEADLINE_DOCTRINE, HOOK_DOCTRINE, HOOK_STYLES, hookStyleDirective } from "../../shared/src";
 import { designPartnerReadiness } from "./readiness";
 
 export function createRouter(repo: Repository) {
@@ -1013,6 +1014,52 @@ export function createRouter(repo: Repository) {
         return;
       }
 
+      // Headline Lab: Cole's "write 30, keep the best" — N attention lines across
+      // proven angles, ranked by the rule-based headlineScore. The shared attention
+      // engine BUILD 2's video-hook mode reuses.
+      if (parsed.kind === "headline") {
+        if (!parsed.text?.trim()) {
+          res.status(400).json({ error: "headline requires the piece text" });
+          return;
+        }
+        const piece = parsed.text.slice(0, 4000);
+        const angles = [
+          'a numbered list ("7 ...", "3 ways ...")',
+          "a direct how-to / promise",
+          "a contrarian opinion that challenges a common belief",
+          "the exact question the reader is already asking",
+          "a specific, surprising outcome or result"
+        ];
+        const variants: SwarmVariant[] = [];
+        for (let i = 0; i < parsed.n; i += 1) {
+          const angle = angles[i % angles.length];
+          variants.push({
+            label: `a${(i % angles.length) + 1}`,
+            system: `${system}\n\n${HEADLINE_DOCTRINE}`,
+            user: `Write ONE attention line (≤14 words) for the piece below, using this angle: ${angle}. Output only the line — no quotes, no numbering, no explanation.\n\nPiece:\n${piece}`,
+            temperature: 0.5 + 0.45 * (i / Math.max(1, parsed.n - 1))
+          });
+        }
+        const results = await runSwarm(variants);
+        const ranked = results
+          .map((result) => {
+            const line = (result.content.trim().split(/\r?\n/)[0] ?? "").replace(/^#+\s*/, "").replace(/^["“”]|["“”]$/g, "").trim();
+            const h = headlineScore(line);
+            return { label: result.label, content: line, score: h.score, verdict: h.reasons.join(", ") };
+          })
+          .filter((item) => item.content.length > 0)
+          .sort((a, b) => b.score - a.score);
+        const experiment = await repo.createExperiment({
+          name: parsed.name ?? "Headline lab",
+          kind: "headline",
+          results: ranked,
+          winner: ranked[0]?.label,
+          cost: swarmCost(results)
+        });
+        res.json({ experiment, ranked, cost: swarmCost(results) });
+        return;
+      }
+
       res.status(400).json({ error: "Unsupported experiment kind for this route" });
     } catch (error) {
       next(error);
@@ -1024,9 +1071,40 @@ export function createRouter(repo: Repository) {
     res.json(hookScore(String(req.body?.text ?? "")));
   });
 
+  // Cheap rule-based attention-line score (headline or spoken video hook), offline.
+  router.post("/headline/score", (req, res) => {
+    res.json(headlineScore(String(req.body?.text ?? "")));
+  });
+
   // Desire meter: per-section want/no-want breakdown (rule-based, offline).
   router.post("/desire/score", (req, res) => {
     res.json(desireScore(String(req.body?.text ?? "")));
+  });
+
+  // Scannability meter: scroll-respect flags (rule-based, offline).
+  router.post("/scannability/score", (req, res) => {
+    res.json(scannabilityScore(String(req.body?.text ?? "")));
+  });
+
+  // Scannability pass: score → fix the flagged spots → auto-save → re-score.
+  router.post("/generate/scannability-pass", async (req, res, next) => {
+    try {
+      const text = String(req.body?.text ?? "");
+      if (!text.trim()) {
+        res.status(400).json({ error: "text is required" });
+        return;
+      }
+      const before = scannabilityScore(text);
+      const flagExcerpts = before.flags.map((flag) => `[${flag.kind}] ${flag.excerpt}`.trim());
+      const promptVersion = await repo.getActivePromptVersion("refine");
+      const response = await runScannabilityPass(text, await repo.getVoice(), flagExcerpts, promptVersion);
+      const record = await saveGeneration(repo, { stage: "refine", response, promptVersionId: promptVersion?.id });
+      const draftPostId = await upsertDraft(repo, { draftPostId: req.body?.draftPostId, finalText: response.content });
+      const after = scannabilityScore(response.content);
+      res.json({ ...response, before, after, draftPostId, generationId: record.id });
+    } catch (error) {
+      next(error);
+    }
   });
 
   // ---- Concept knowledge-graph (territories) ----

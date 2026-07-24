@@ -29,6 +29,7 @@ import {
   Target,
   Trash2,
   Tv,
+  Type,
   Wand2,
   X
 } from "lucide-react";
@@ -40,6 +41,7 @@ import type {
   CorpusSource,
   ConceptNode,
   DesireReport,
+  ScannabilityReport,
   Experiment,
   ExperimentResult,
   GenerationRecord,
@@ -128,6 +130,8 @@ export default function App() {
   const [visualCount, setVisualCount] = useState(3);
   const [repurpose, setRepurpose] = useState<RepurposePackage | null>(null);
   const [hooks, setHooks] = useState<ExperimentResult[]>([]);
+  const [headlines, setHeadlines] = useState<ExperimentResult[]>([]);
+  const [scannability, setScannability] = useState<ScannabilityReport | null>(null);
   const [retrieved, setRetrieved] = useState<RetrievedPost[]>([]);
   const [citations, setCitations] = useState<CitationFlag[]>([]);
   const [qualityReport, setQualityReport] = useState<QualityReport | null>(null);
@@ -472,6 +476,12 @@ export default function App() {
               onCopyIllustrated={() => navigator.clipboard.writeText(buildIllustratedMarkdown(finalForPackage, image, sectionImages))}
               onGenerateHooks={() => runStep("Generating hooks", () => api.runHooks(finalForPackage, 6), (res) => setHooks(res.ranked))}
               onUseHook={(opener) => setFinalText(`${opener}\n\n${finalText || draft}`)}
+              headlines={headlines}
+              onGenerateHeadlines={() => runStep("Naming", () => api.runHeadlines(finalForPackage, 8), (res) => setHeadlines(res.ranked))}
+              onUseHeadline={(title) => {
+                const body = finalText || draft;
+                setFinalText(/^#\s+.+/m.test(body) ? body.replace(/^#\s+.+$/m, `# ${title}`) : `# ${title}\n\n${body}`);
+              }}
               onRefine={(text, params) => runStep("Refining", () => api.refine(text, params, draftPostId), async (res) => {
                 setFinalText(res.content);
                 setCitations(res.citations);
@@ -486,6 +496,15 @@ export default function App() {
               onDesirePass={() => runStep("Desire pass", () => api.desirePass(finalForPackage, draftPostId), async (res) => {
                 setFinalText(res.content);
                 setDesireReport(res.after);
+                setDraftPostId(res.draftPostId);
+                setLastGenerationId(res.generationId);
+                await refresh();
+              })}
+              scannabilityReport={scannability}
+              onCheckScannability={() => runStep("Checking scannability", () => api.scannabilityScore(finalForPackage), setScannability)}
+              onScannabilityPass={() => runStep("Skimmable pass", () => api.scannabilityPass(finalForPackage, draftPostId), async (res) => {
+                setFinalText(res.content);
+                setScannability(res.after);
                 setDraftPostId(res.draftPostId);
                 setLastGenerationId(res.generationId);
                 await refresh();
@@ -581,6 +600,8 @@ export default function App() {
                   topic: idea.title,
                   seed: idea.angle,
                   tension: idea.rationale,
+                  // Carry Cole's writing form into the brief so the frame honors it (guide/list/story/…).
+                  format: idea.writingType ? idea.writingType : blankBrief.format,
                   mode: idea.type === "expand" ? "expand" : "new",
                   sourcePostId: idea.sourcePostId
                 });
@@ -654,6 +675,7 @@ function ComposeView(props: {
   image: ImageAsset | null;
   repurpose: RepurposePackage | null;
   hooks: ExperimentResult[];
+  headlines: ExperimentResult[];
   imageStyle: string;
   setImageStyle: (value: string) => void;
   sectionImages: ImageAsset[];
@@ -685,10 +707,15 @@ function ComposeView(props: {
   onLoadDoctrine: () => void;
   onGenerateHooks: () => void;
   onUseHook: (opener: string) => void;
+  onGenerateHeadlines: () => void;
+  onUseHeadline: (title: string) => void;
   onRepurpose: () => void;
   desireReport: DesireReport | null;
   onCheckDesire: () => void;
   onDesirePass: () => void;
+  scannabilityReport: ScannabilityReport | null;
+  onCheckScannability: () => void;
+  onScannabilityPass: () => void;
   onEvaluate: () => void;
   onRewrite: () => void;
   onUseSeed: (seed: BriefSeed) => void;
@@ -728,7 +755,9 @@ function ComposeView(props: {
     refine: <Wand2 size={15} />,
     hooks: <Sparkles size={15} />,
     desire: <Target size={15} />,
+    headline: <Type size={15} />,
     images: <Image size={15} />,
+    scan: <ListOrdered size={15} />,
     score: <Layers size={15} />
   };
 
@@ -896,6 +925,12 @@ function ComposeView(props: {
           ) : null}
           {move === "desire" ? (
             <DesireMeterPanel report={props.desireReport} ready={Boolean(working)} busy={props.busy} onCheck={props.onCheckDesire} onPass={props.onDesirePass} />
+          ) : null}
+          {move === "headline" ? (
+            <HeadlineLabPanel titles={props.headlines} ready={Boolean(working)} busy={props.busy} onGenerate={props.onGenerateHeadlines} onUse={props.onUseHeadline} />
+          ) : null}
+          {move === "scan" ? (
+            <ScannabilityPanel report={props.scannabilityReport} ready={Boolean(working)} busy={props.busy} onCheck={props.onCheckScannability} onPass={props.onScannabilityPass} />
           ) : null}
           {move === "images" ? (
             <div className="panel-instrument">
@@ -2222,13 +2257,16 @@ function DiscoverView(props: { ideas: TopicIdea[]; busy: string; onGenerate: () 
 function IdeaCard({ idea, order, onUse }: { idea: TopicIdea; order?: number; onUse: (idea: TopicIdea) => void }) {
   return (
     <article className="rounded-md border border-slate-200 bg-white p-4">
-      <div className="flex items-center gap-2">
+      <div className="flex flex-wrap items-center gap-2">
         <span className="badge">{idea.type}</span>
         {order ? <span className="badge">part {order}</span> : null}
+        {idea.writingType ? <span className="badge-dusk">{idea.writingType}</span> : null}
+        {idea.ideaCategory ? <span className="badge">{idea.ideaCategory}</span> : null}
       </div>
       <h2 className="mt-3 font-display text-xl font-bold">{idea.title}</h2>
       <p className="mt-2 text-sm leading-6 text-slate-700">{idea.angle}</p>
       <p className="mt-3 text-xs text-slate-500">{idea.rationale}</p>
+      {idea.whyMe ? <p className="mt-1 text-xs text-slate-400">Authority: {idea.whyMe}</p> : null}
       <button className="btn mt-4" onClick={() => onUse(idea)}>
         <PenLine size={16} /> Use
       </button>
@@ -2537,6 +2575,104 @@ function FirstLookPanel({
               {hook.verdict ? <p className="mt-1 text-xs text-slate-400">{hook.verdict}</p> : null}
             </div>
           ))}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+// Headline Lab: Cole's "write 30, keep the best" — ranked attention lines with
+// scores, one-click "Use" sets the piece's H1 title.
+function HeadlineLabPanel({
+  titles,
+  ready,
+  busy,
+  onGenerate,
+  onUse
+}: {
+  titles: ExperimentResult[];
+  ready: boolean;
+  busy: string;
+  onGenerate: () => void;
+  onUse: (title: string) => void;
+}) {
+  return (
+    <div className="panel-instrument">
+      <h3 className="flex items-center gap-2 font-bold"><Type size={16} /> Name it</h3>
+      <p className="mt-1 text-sm text-slate-500">Generate a spread of titles across proven angles and keep the strongest — the headline earns the open.</p>
+      <div className="mt-3">
+        <ActionButton icon={<Type size={16} />} disabled={!ready || Boolean(busy)} onClick={onGenerate}>
+          Generate headlines
+        </ActionButton>
+      </div>
+      {titles.length ? (
+        <div className="mt-3 grid gap-2">
+          <p className="text-xs text-slate-500">Ranked by attention magnets (number · power word · specificity · curiosity). Higher = stronger.</p>
+          {titles.map((title, index) => (
+            <div className="rounded-md border border-slate-200 p-2" key={index}>
+              <div className="flex items-center justify-between gap-2">
+                <span className="text-xs font-bold">{title.score}/10</span>
+                <button className="btn" onClick={() => onUse(title.content)}>
+                  <PenLine size={14} /> Use as title
+                </button>
+              </div>
+              <p className="mt-1 font-display text-base font-bold leading-6 text-ink">{title.content}</p>
+              {title.verdict ? <p className="mt-1 text-xs text-slate-400">{title.verdict}</p> : null}
+            </div>
+          ))}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+// Scannability / "rate of revelation": score the scroll-respect, list the
+// flagged spots, one-click "Make it skimmable" pass with before→after.
+function ScannabilityPanel({
+  report,
+  ready,
+  busy,
+  onCheck,
+  onPass
+}: {
+  report: ScannabilityReport | null;
+  ready: boolean;
+  busy: string;
+  onCheck: () => void;
+  onPass: () => void;
+}) {
+  const FLAG_LABELS: Record<string, string> = {
+    "long-first-sentence": "Long first sentence",
+    "wall-of-text": "Wall of text",
+    "no-subheadings": "No subheadings",
+    "slow-lead": "Slow lead"
+  };
+  return (
+    <div className="panel-instrument">
+      <h3 className="flex items-center gap-2 font-bold"><ListOrdered size={16} /> Make it skimmable</h3>
+      <p className="mt-1 text-sm text-slate-500">A read on whether the piece respects the scroll — short open, signposts, varied rhythm, no walls.</p>
+      <div className="mt-3 flex flex-wrap gap-2">
+        <ActionButton icon={<Search size={16} />} disabled={!ready || Boolean(busy)} onClick={onCheck}>Check scannability</ActionButton>
+        <ActionButton icon={<Wand2 size={16} />} disabled={!report || report.flags.length === 0 || Boolean(busy)} onClick={onPass}>Make it skimmable</ActionButton>
+      </div>
+      {report ? (
+        <div className="mt-3">
+          <p className="text-sm font-bold">{report.score}/10 scannable</p>
+          {report.reasons.length ? (
+            <ul className="mt-2 grid gap-1 text-sm text-slate-600">
+              {report.reasons.map((reason, index) => <li key={index}>• {reason}</li>)}
+            </ul>
+          ) : null}
+          {report.flags.length ? (
+            <div className="mt-3 grid gap-2">
+              {report.flags.map((flag, index) => (
+                <div className="rounded-md border border-slate-200 p-2" key={index}>
+                  <span className="text-xs font-bold uppercase text-slate-500">{FLAG_LABELS[flag.kind] ?? flag.kind}</span>
+                  {flag.excerpt ? <p className="mt-1 text-sm italic text-slate-600">“{flag.excerpt}…”</p> : null}
+                </div>
+              ))}
+            </div>
+          ) : null}
         </div>
       ) : null}
     </div>

@@ -106,6 +106,33 @@ export const DESIRE_DOCTRINE = [
   "Keep wants TRUE to the piece — never bolt on a craving that doesn't belong — and vary them so desire doesn't become a repeated tic."
 ].join("\n");
 
+// Power words that reliably lift an attention line (Cole's "magnet" vocabulary).
+// Used by headlineScore to reward a line that reaches for one.
+export const HEADLINE_POWER_WORDS = [
+  "crucial", "little-known", "powerful", "unforgettable", "memorable", "eye-opening",
+  "painful", "emerging", "surprising", "brutal", "honest", "proven", "hidden", "secret", "underrated"
+];
+
+// The attention line — a page headline OR the first spoken line of a video —
+// earns the first second. Shared craft: the Headline/Hook Lab generates and
+// scores these for BOTH media (essay title in BUILD 1; video spoken hook in
+// BUILD 2), so this doctrine is deliberately media-agnostic.
+export const HEADLINE_DOCTRINE = [
+  "An attention line (a page headline, or the first spoken line of a video) earns the first second. Anatomy: name WHAT it's about, WHO it's for, and the PROMISE — and open a curiosity gap only the piece can close.",
+  "Reach for proven magnets: a specific number, a concrete detail over a clever abstraction, one power word, a named person or thing, or the exact question the audience is already asking themselves.",
+  "Be specific enough that the line could only front THIS piece. If deleting the number or name leaves something that could sit on anything, it is too generic — rewrite it.",
+  "Never: vague throat-clearing, clickbait a payoff can't honor, ALL-CAPS shouting, or padding past ~14 words (a spoken hook should be shorter still).",
+  "Write many, keep the strongest — the best line is found by volume, not first-try cleverness."
+].join("\n");
+
+// One controlling idea per piece (Cole's "say one thing"). Shared primitive:
+// BUILD 2's video script imports this exact constant for its "one through-line."
+export const ONE_THING_DOCTRINE = [
+  "Say ONE thing. A piece (or a video) advances a single controlling idea; the moment a second idea competes for the frame, it belongs in a different piece.",
+  "Every section, example, and line serves that one claim — cut whatever only serves a different one.",
+  "State the one thing plainly enough that a reader could repeat it back in a single sentence."
+].join("\n");
+
 export const HOOK_STYLES = ["mirror-scene", "direct-analytical", "provocative-question", "confession"] as const;
 
 export function hookStyleDirective(style?: string): string {
@@ -129,7 +156,7 @@ export const DEFAULT_PROMPT_TEMPLATES: PromptTemplateInput[] = [
     description: "Turns messy notes into thesis, spine, moves, anchor, tension, and audience.",
     notes: "Default production prompt",
     body:
-      "Turn the brief and raw notes into a tight build-brief: one-sentence thesis, structural spine, 3-6 key moves, anchor, tension, and audience. Do not write the post. Honor the voice profile and source-handling rules."
+      "Turn the brief and raw notes into a tight build-brief: the one thing (a single-sentence controlling idea the whole piece serves), structural spine, 3-6 key moves, anchor, tension, and audience. Do not write the post. Honor the voice profile and source-handling rules."
   },
   {
     stage: "draft",
@@ -153,7 +180,7 @@ export const DEFAULT_PROMPT_TEMPLATES: PromptTemplateInput[] = [
     description: "Generates new topics and expansions from archive memory, clustered into series.",
     notes: "Default production prompt",
     body:
-      "Read the archive index and voice profile. Return a strict JSON array of proposals; each has type, title, angle, rationale, optional sourcePostId, and (where it belongs to an arc) a `series` name and integer `seriesOrder` starting at 1. Cluster related proposals into 1-3 named series that each carry a clear through-line from a starting piece to deeper cuts and counterarguments. Leave standalone ideas without a series. Prefer topics that compound prior ideas without repeating them."
+      "Read the archive index and voice profile. Return a strict JSON array of proposals; each has type, title, angle, rationale, optional sourcePostId, an optional `series` name + integer `seriesOrder`, and — per Cole's Idea Generator — a `writingType` (guide|opinion|list|story|credibility), an `ideaCategory` (explanation|habit|mistake|lesson|tip|story|timely), and a `whyMe` (expert|talked-to-experts|opinion). Cluster related proposals into 1-3 named series that each carry a clear through-line from a starting piece to deeper cuts and counterarguments. Leave standalone ideas without a series. Prefer topics that compound prior ideas without repeating them."
   },
   {
     stage: "repurpose",

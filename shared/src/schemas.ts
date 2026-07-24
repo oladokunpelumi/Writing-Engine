@@ -191,6 +191,11 @@ export const TopicIdeaSchema = z.object({
   sourcePostId: z.string().optional(),
   series: z.string().optional(),
   seriesOrder: z.number().int().optional(),
+  // Cole's Idea Generator: the writing form, the idea category, and the
+  // author's authority angle (kept lenient strings so model output never fails).
+  writingType: z.string().optional(),
+  ideaCategory: z.string().optional(),
+  whyMe: z.string().optional(),
   createdAt: isoDate
 });
 
@@ -473,6 +478,12 @@ export const QualityReportSchema = z.object({
   createdAt: isoDate
 });
 
+// Attention-line score (headline or spoken video hook) — rule-based, offline.
+export const AttentionLineScoreSchema = z.object({
+  score: z.number(),
+  reasons: z.array(z.string())
+});
+
 // Per-section desire meter: does each section show a want (Vonnegut's "glass of water")?
 export const DesireSectionSchema = z.object({
   index: z.number(),
@@ -493,6 +504,25 @@ export const DesirePassResponseSchema = z.object({
   model: z.string(),
   before: DesireReportSchema,
   after: DesireReportSchema,
+  draftPostId: z.string().optional(),
+  generationId: z.string().optional(),
+  usage: UsageSchema.optional()
+});
+
+// Scannability / "rate of revelation": scroll-respecting reads (Cole).
+export const ScannabilityFlagSchema = z.object({ kind: z.string(), excerpt: z.string() });
+export const ScannabilityReportSchema = z.object({
+  score: z.number(),
+  flags: z.array(ScannabilityFlagSchema),
+  reasons: z.array(z.string())
+});
+
+export const ScannabilityPassResponseSchema = z.object({
+  content: z.string(),
+  provider: z.enum(["mock", "openrouter"]),
+  model: z.string(),
+  before: ScannabilityReportSchema,
+  after: ScannabilityReportSchema,
   draftPostId: z.string().optional(),
   generationId: z.string().optional(),
   usage: UsageSchema.optional()
@@ -732,7 +762,7 @@ export const GridPublishRequestSchema = z.object({ story: z.string().min(1) });
 export const GridMemoryUpdateSchema = z.object({ bible: z.string().optional(), storyLog: z.string().optional() });
 
 // ---- Swarm experiments (transitive-learning: cheap fan-out → score/merge) ----
-export const ExperimentKindSchema = z.enum(["best-draft", "ab-prompt", "extract", "hook"]);
+export const ExperimentKindSchema = z.enum(["best-draft", "ab-prompt", "extract", "hook", "headline"]);
 
 export const ExperimentRunRequestSchema = z.object({
   kind: ExperimentKindSchema,
@@ -856,6 +886,9 @@ export type QualityReport = z.infer<typeof QualityReportSchema>;
 export type DesireSection = z.infer<typeof DesireSectionSchema>;
 export type DesireReport = z.infer<typeof DesireReportSchema>;
 export type DesirePassResponse = z.infer<typeof DesirePassResponseSchema>;
+export type ScannabilityReport = z.infer<typeof ScannabilityReportSchema>;
+export type ScannabilityPassResponse = z.infer<typeof ScannabilityPassResponseSchema>;
+export type AttentionLineScore = z.infer<typeof AttentionLineScoreSchema>;
 export type OutputRevision = z.infer<typeof OutputRevisionSchema>;
 export type GenerationRecord = z.infer<typeof GenerationRecordSchema>;
 export type UsageLimit = z.infer<typeof UsageLimitSchema>;
