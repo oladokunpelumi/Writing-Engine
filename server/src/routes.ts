@@ -76,7 +76,7 @@ import { buildPreviousInputsPreview, combinedCorpusSource, type ImportContent } 
 import { applyDistillationToVoice, distillVoice } from "./voiceDistillation";
 import { desireScore, evaluateQuality, headlineScore, hookScore, rewriteSlop, scannabilityScore } from "./quality";
 import { analyzeReference, runVideoScript, runVideoShots, suggestPersonas } from "./videoStudio";
-import { generateImage } from "./images";
+import { anchorImageModel, generateImage } from "./images";
 import { HEADLINE_DOCTRINE, HOOK_DOCTRINE, HOOK_STYLES, hookStyleDirective } from "../../shared/src";
 import { designPartnerReadiness } from "./readiness";
 
@@ -377,9 +377,31 @@ export function createRouter(repo: Repository) {
       const look = persona
         ? [persona.appearance, persona.wardrobe, persona.setting, persona.visualStyle].filter(Boolean).join(", ")
         : "";
+      // Google Flow holds character consistency from a reference "ingredient", not
+      // from a still per shot — so generate ONE anchor (premium tier, cached on the
+      // persona so reruns cost nothing) and reuse it. Per-shot stills are opt-in
+      // (`perShot: true`) and use the cheap tier.
       let extra = 0;
+      let imagesGenerated = 0;
+      let anchorUrl = persona?.anchorImageUrl;
+      if (persona && !anchorUrl) {
+        const anchorPrompt = `Vertical 9:16 character reference portrait of a single person for a UGC video: ${look || persona.name}. Neutral relaxed expression, facing camera, head-and-shoulders, clean even lighting, photographic and true-to-life. This image is the consistency reference for every later shot.`.slice(0, 1200);
+        const img = await generateImage(anchorPrompt, anchorImageModel());
+        await recordImageCost(repo, { prompt: anchorPrompt, provider: img.provider, model: img.model, cost: img.cost });
+        const saved = await repo.saveImage({ prompt: anchorPrompt, url: img.url, provider: img.provider, role: "keyframe", caption: `${persona.name} — anchor` });
+        anchorUrl = saved.url;
+        extra += img.cost ?? 0;
+        imagesGenerated += 1;
+        await repo.setPersonaAnchor(persona.id, saved.url);
+      }
+      const perShot = req.body?.perShot === true;
       const shots = [];
       for (const shot of project.shots) {
+        if (!perShot) {
+          // Every shot inherits the one anchor — same face, one image, no drift.
+          shots.push({ ...shot, keyframeUrl: shot.keyframeUrl ?? anchorUrl });
+          continue;
+        }
         const keyframePrompt = `Vertical 9:16 keyframe still for a UGC video shot. ${look ? look + ". " : ""}${shot.visualPrompt}`.slice(0, 1200);
         const img = await generateImage(keyframePrompt);
         await recordImageCost(repo, { prompt: keyframePrompt, provider: img.provider, model: img.model, cost: img.cost });
@@ -391,10 +413,11 @@ export function createRouter(repo: Repository) {
           caption: shot.onScreenText
         });
         extra += img.cost ?? 0;
+        imagesGenerated += 1;
         shots.push({ ...shot, keyframeUrl: saved.url });
       }
       const updated = await repo.saveVideoProject({ id: project.id, shots, cost: (project.cost ?? 0) + extra });
-      res.json(updated);
+      res.json({ ...updated, anchorImageUrl: anchorUrl, imagesGenerated });
     } catch (error) {
       next(error);
     }

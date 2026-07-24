@@ -2918,13 +2918,19 @@ function VideoStudioView({
         <section className="desk-panel">
           <div className="flex flex-wrap items-center justify-between gap-2">
             <h2 className="font-display text-xl font-bold">Shots ({project.shots.length}) → Flow</h2>
-            <div className="flex gap-2">
+            <div className="flex flex-wrap gap-2">
               <button className="btn" onClick={() => copy(allPrompts)}><Clipboard size={14} /> Copy all prompts</button>
-              <ActionButton icon={<Image size={16} />} disabled={Boolean(busy)} onClick={() => runStep("Rendering keyframes", () => api.videoStoryboard(project.id), setProject)}>
-                {project.shots.some((s) => s.keyframeUrl) ? "Re-render keyframes" : "Generate keyframes"}
+              <ActionButton icon={<Image size={16} />} disabled={Boolean(busy)} onClick={() => runStep("Rendering anchor", () => api.videoStoryboard(project.id), setProject)}>
+                {project.shots.some((s) => s.keyframeUrl) ? "Refresh reference" : "Generate reference (1 image)"}
+              </ActionButton>
+              <ActionButton icon={<Layers size={16} />} disabled={Boolean(busy)} onClick={() => runStep("Rendering per-shot stills", () => api.videoStoryboard(project.id, true), setProject)}>
+                Per-shot stills ({project.shots.length} images)
               </ActionButton>
             </div>
           </div>
+          <p className="mt-2 text-xs text-slate-500">
+            Flow holds the character from one reference image, so the anchor is generated once per persona and reused by every shot — reruns are free. Per-shot stills are optional and bill one image each.
+          </p>
           <div className="mt-4 grid gap-3">
             {project.shots.map((shot, i) => (
               <div className="rounded-md border border-slate-200 bg-white p-3" key={i}>

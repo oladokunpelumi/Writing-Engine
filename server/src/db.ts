@@ -404,9 +404,13 @@ async function migrate(db: AppDatabase) {
       owner_id text NOT NULL DEFAULT 'owner-default',
       name text NOT NULL,
       profile text NOT NULL,
+      anchor_image_url text,
       created_at text NOT NULL,
       updated_at text NOT NULL
     );
+
+    -- The cached persona anchor (one reference image reused as the Flow ingredient).
+    ALTER TABLE video_personas ADD COLUMN IF NOT EXISTS anchor_image_url text;
 
     CREATE TABLE IF NOT EXISTS video_projects (
       id text PRIMARY KEY,

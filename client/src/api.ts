@@ -156,8 +156,14 @@ export const api = {
     request<{ suggestions: PersonaSuggestion[] }>("/api/video/personas/suggest", { method: "POST", headers: jsonHeaders, body: JSON.stringify({ projectId }) }),
   videoShots: (projectId: string) =>
     request<VideoProject>("/api/video/shots", { method: "POST", headers: jsonHeaders, body: JSON.stringify({ projectId }) }),
-  videoStoryboard: (projectId: string) =>
-    request<VideoProject>("/api/video/storyboard", { method: "POST", headers: jsonHeaders, body: JSON.stringify({ projectId }) }),
+  // perShot=false (default) reuses ONE cached persona anchor as the Flow ingredient
+  // for every shot; perShot=true renders an individual still per shot (costs N images).
+  videoStoryboard: (projectId: string, perShot = false) =>
+    request<VideoProject & { anchorImageUrl?: string; imagesGenerated?: number }>("/api/video/storyboard", {
+      method: "POST",
+      headers: jsonHeaders,
+      body: JSON.stringify({ projectId, perShot })
+    }),
   shows: () => request<{ shows: Show[]; activeShow: Show }>("/api/shows"),
   createShow: (input: ShowInput) =>
     request<Show>("/api/shows", { method: "POST", headers: jsonHeaders, body: JSON.stringify(input) }),

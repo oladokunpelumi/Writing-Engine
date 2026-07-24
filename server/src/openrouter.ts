@@ -58,7 +58,8 @@ const modelProfiles: Record<ModelProfile, Partial<Record<PromptStage, string>>> 
     "study-skill": "google/gemini-3.1-flash-lite",
     "video-reference": "google/gemini-3.1-flash-lite",
     "video-script": "z-ai/glm-5.2",
-    "video-shots": "google/gemini-3.1-flash-lite"
+    "video-shots": "google/gemini-3.1-flash-lite",
+    image: "google/gemini-3.1-flash-lite-image"
   },
   balanced: {
     frame: "z-ai/glm-5.2",
@@ -79,7 +80,8 @@ const modelProfiles: Record<ModelProfile, Partial<Record<PromptStage, string>>> 
     "study-skill": "google/gemini-3.1-flash-lite",
     "video-reference": "google/gemini-3.1-flash-lite",
     "video-script": "anthropic/claude-sonnet-4.6",
-    "video-shots": "google/gemini-3.1-flash-lite"
+    "video-shots": "google/gemini-3.1-flash-lite",
+    image: "google/gemini-3.1-flash-image"
   },
   premium: {
     frame: "anthropic/claude-sonnet-4.6",
@@ -100,7 +102,8 @@ const modelProfiles: Record<ModelProfile, Partial<Record<PromptStage, string>>> 
     "study-skill": "anthropic/claude-sonnet-4.6",
     "video-reference": "google/gemini-3.1-flash-lite",
     "video-script": "anthropic/claude-sonnet-4.6",
-    "video-shots": "z-ai/glm-5.2"
+    "video-shots": "z-ai/glm-5.2",
+    image: "google/gemini-3-pro-image"
   }
 };
 

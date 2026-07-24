@@ -2,8 +2,41 @@
 // (POST /api/v1/images → { data: [{ b64_json }] }). Replaces the old approach of
 // regex-grepping a URL out of a chat completion (which images don't return).
 
+// Image models are tiered by MODEL_PROFILE like every text stage (they were not,
+// which is why cost-first still billed the premium tier). Rates are per output
+// image token; the premium tier costs 4x the lite tier for the same picture.
+// Resolved locally (not via openrouter.modelFor) to avoid an import cycle.
+const IMAGE_TIERS = {
+  "cost-first": "google/gemini-3.1-flash-lite-image",
+  balanced: "google/gemini-3.1-flash-image",
+  premium: "google/gemini-3-pro-image"
+} as const;
+
+// ≈ USD per generated image, used ONLY when the API response omits a cost so
+// spend caps and telemetry never silently under-count images. ~1290 output image
+// tokens per standard-resolution picture x each tier's image_output rate.
+const IMAGE_COST_ESTIMATES: Record<string, number> = {
+  "google/gemini-3-pro-image": 0.155,
+  "google/gemini-3-pro-image-preview": 0.155,
+  "google/gemini-3.1-flash-image": 0.077,
+  "google/gemini-3.1-flash-lite-image": 0.039,
+  "google/gemini-2.5-flash-image": 0.039
+};
+
+function imageProfile(): keyof typeof IMAGE_TIERS {
+  const value = process.env.MODEL_PROFILE;
+  return value === "balanced" || value === "premium" ? value : "cost-first";
+}
+
+// Everyday images (article covers, section art, optional per-shot stills).
 export function imageModel(): string {
-  return process.env.MODEL_IMAGE ?? "google/gemini-3-pro-image-preview";
+  return process.env.MODEL_IMAGE ?? IMAGE_TIERS[imageProfile()];
+}
+
+// The persona anchor is the single reference every Veo shot inherits, so quality
+// compounds there — it stays on the premium tier even under cost-first.
+export function anchorImageModel(): string {
+  return process.env.MODEL_IMAGE_ANCHOR ?? IMAGE_TIERS.premium;
 }
 
 export const VISUAL_CONCEPT_SYSTEM = [
@@ -54,11 +87,16 @@ export function mockImage(prompt: string): string {
 // Cost from the images response if present, else a configurable per-image
 // estimate (IMAGE_COST_USD). The /images endpoint doesn't reliably return usage,
 // so the estimate is how per-piece image spend becomes visible in telemetry.
-function imageCost(raw: { usage?: { cost?: number }; cost?: number }): number | undefined {
+// Always resolve to a number when the provider is real: an unpriced image used to
+// return undefined, which meant spend caps under-counted image generation — the
+// exact hole that let an image-heavy day run away. Order: real cost from the
+// response > IMAGE_COST_USD override > per-tier estimate.
+function imageCost(raw: { usage?: { cost?: number }; cost?: number }, model: string): number | undefined {
   const fromResponse = raw?.usage?.cost ?? raw?.cost;
   if (typeof fromResponse === "number" && fromResponse > 0) return fromResponse;
   const env = Number(process.env.IMAGE_COST_USD);
-  return Number.isFinite(env) && env > 0 ? env : undefined;
+  if (Number.isFinite(env) && env > 0) return env;
+  return IMAGE_COST_ESTIMATES[model];
 }
 
 export async function generateImage(
@@ -85,5 +123,5 @@ export async function generateImage(
   const item = data.data?.[0];
   const url = item?.b64_json ? `data:image/png;base64,${item.b64_json}` : item?.url ?? "";
   if (!url) throw new Error("OpenRouter returned no image");
-  return { url, provider: "openrouter", model, cost: imageCost(data) };
+  return { url, provider: "openrouter", model, cost: imageCost(data, model) };
 }

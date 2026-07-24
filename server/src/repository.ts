@@ -642,9 +642,18 @@ export class Repository {
       vocalStyle: profile.vocalStyle ?? "",
       mannerisms: profile.mannerisms ?? "",
       visualStyle: profile.visualStyle ?? "",
+      anchorImageUrl: row.anchor_image_url ? String(row.anchor_image_url) : undefined,
       createdAt: String(row.created_at),
       updatedAt: String(row.updated_at)
     };
+  }
+
+  // Cache the persona's anchor reference image so later videos reuse it for free.
+  async setPersonaAnchor(id: string, url: string): Promise<VideoPersona | undefined> {
+    await this.db
+      .prepare("UPDATE video_personas SET anchor_image_url = ?, updated_at = ? WHERE id = ? AND owner_id = ?")
+      .run(url, now(), id, this.owner);
+    return this.getPersona(id);
   }
 
   async listPersonas(): Promise<VideoPersona[]> {
@@ -669,10 +678,22 @@ export class Repository {
   }
 
   async updatePersona(id: string, input: VideoPersonaInput): Promise<VideoPersona | undefined> {
-    if (!(await this.getPersona(id))) return undefined;
+    const existing = await this.getPersona(id);
+    if (!existing) return undefined;
     const { name, ...profile } = input;
+    // If the persona's LOOK changed, the cached anchor no longer depicts them —
+    // drop it so the next storyboard regenerates a matching reference.
+    const lookChanged =
+      existing.appearance !== (input.appearance ?? "") ||
+      existing.wardrobe !== (input.wardrobe ?? "") ||
+      existing.setting !== (input.setting ?? "") ||
+      existing.visualStyle !== (input.visualStyle ?? "");
     await this.db
-      .prepare("UPDATE video_personas SET name = ?, profile = ?, updated_at = ? WHERE id = ? AND owner_id = ?")
+      .prepare(
+        lookChanged
+          ? "UPDATE video_personas SET name = ?, profile = ?, anchor_image_url = NULL, updated_at = ? WHERE id = ? AND owner_id = ?"
+          : "UPDATE video_personas SET name = ?, profile = ?, updated_at = ? WHERE id = ? AND owner_id = ?"
+      )
       .run(name, json(profile), now(), id, this.owner);
     return this.getPersona(id);
   }

@@ -810,6 +810,9 @@ export const VideoPersonaSchema = z.object({
   vocalStyle: z.string().default(""),
   mannerisms: z.string().default(""),
   visualStyle: z.string().default(""),
+  // Cached character-reference image: generated once, reused as the Google Flow
+  // "ingredient" for every shot (so the face never drifts and reruns cost $0).
+  anchorImageUrl: z.string().optional(),
   createdAt: isoDate,
   updatedAt: isoDate
 });
