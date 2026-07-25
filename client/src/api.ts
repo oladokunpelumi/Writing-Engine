@@ -358,9 +358,16 @@ export const api = {
     body: Record<string, unknown>,
     onToken: (token: string) => void
   ): Promise<GenerationResponse> => {
+    // This bypasses the shared request() wrapper (it needs the raw ReadableStream,
+    // not a parsed JSON response), so it must attach the auth header itself —
+    // it was missing here, which is why streaming draft generation alone 401'd
+    // under AUTH_REQUIRED while every other call (routed through request()) worked.
+    const headers = new Headers(jsonHeaders);
+    const token = getToken();
+    if (token) headers.set("Authorization", `Bearer ${token}`);
     const response = await fetch(`/api/generate/${stage}/stream`, {
       method: "POST",
-      headers: jsonHeaders,
+      headers,
       body: JSON.stringify(body)
     });
     if (!response.ok || !response.body) {
