@@ -144,7 +144,7 @@ describe("design-partner admin readiness", () => {
 describe("public metadata", () => {
   it("uses an absolute production og:image URL", () => {
     const html = readFileSync(new URL("../../client/index.html", import.meta.url), "utf8");
-    expect(html).toContain('property="og:image" content="https://writing-engine-production.up.railway.app/og-image.svg"');
+    expect(html).toContain('property="og:image" content="https://co-create-production.up.railway.app/og-image.svg"');
   });
 });
 

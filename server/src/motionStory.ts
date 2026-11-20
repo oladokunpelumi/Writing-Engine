@@ -44,7 +44,8 @@ import { headlineScore } from "./quality";
 export const WORDS_PER_SECOND = 3;
 export const SETTLE_SECONDS = 0.6;
 export const MAX_LINES_PER_CARD = 3;
-export const MAX_WORDS_PER_LINE = 7;
+/** Vertical feeds read about 5 English words per line of a claim (HyperFrames vertical guide). */
+export const MAX_WORDS_PER_LINE = 5;
 
 export const STORY_CONTRACT_VERSION = "co-create.motion-story/1";
 
@@ -103,19 +104,39 @@ function stripMarkdown(text: string): string {
 }
 
 function sentencesOf(text: string): string[] {
+  // A line break before a capital ends a unit too: poems, lists and titles
+  // written without a full stop. A break before lowercase is a hard wrap.
   return stripMarkdown(text)
-    .split(/\n{2,}/)
+    .split(/\n{2,}|\n(?=\s*[A-Z0-9"“])/)
     .flatMap((block) => block.replace(/\s+/g, " ").split(/(?<=[.!?])\s+(?=[A-Z0-9"“])/))
     .map((sentence) => sentence.trim())
     .filter((sentence) => wordsOf(sentence).length >= 3);
 }
 
 /**
+ * How well a sentence works as a moving card: short enough to read at a
+ * glance, carrying a turn or a figure. Repetition is scored later.
+ */
+function cardScore(sentence: string): number {
+  const words = wordsOf(sentence).length;
+  let score = 0;
+  if (words <= 10) score += 2;
+  else if (words > 18) score -= 2;
+  if (/\b(not|but|instead|yet|stop|never|isn'?t|aren'?t|won'?t|don'?t|can'?t|until|unless)\b/i.test(sentence)) score += 2;
+  if (/\d/.test(sentence)) score += 2;
+  if (/\?$/.test(sentence)) score += 1;
+  return score;
+}
+
+/** Two sentences opening on the same three words read as one card twice (v1.2 R). */
+const stemOf = (sentence: string) => wordsOf(sentence.toLowerCase().replace(/[^a-z0-9\s']/g, "")).slice(0, 3).join(" ");
+
+/**
  * Break a sentence into card lines WITHOUT adding a word: a contiguous run of
  * the sentence, chunked into lines of at most MAX_WORDS_PER_LINE. Long
  * sentences are cut at the first clause boundary so a card stays one idea.
  */
-export function toCardLines(sentence: string, maxWords = MAX_LINES_PER_CARD * 6): string[] {
+export function toCardLines(sentence: string, maxWords = MAX_LINES_PER_CARD * MAX_WORDS_PER_LINE): string[] {
   let words = wordsOf(sentence.replace(/^[-•]\s*/, ""));
   if (words.length > maxWords) {
     const clauseEnd = words.findIndex((word, index) => index >= 3 && index < maxWords && /[,;:—–]$/.test(word));
@@ -320,10 +341,17 @@ export function mockMotionStory(input: { text: string; title?: string; targetSec
     [...sentences].reverse().find((sentence) => conclusion.test(sentence)) ?? sentences[sentences.length - 1];
   const hook = sentences[0];
   const pool = sentences.slice(1).filter((sentence) => sentence !== oneThing);
-  // Prefer sentences a viewer could check (a number, a name), then spread across the piece.
-  const anchored = pool.filter((sentence) => hasConcreteAnchor(sentence));
-  const rest = pool.filter((sentence) => !hasConcreteAnchor(sentence));
-  const picked = [...anchored, ...rest].slice(0, middleCount);
+  // Best cards first (a turn, a figure, short enough to read), one per repeated
+  // stem, then shown in the piece's own order.
+  const stems = new Set([stemOf(hook), stemOf(oneThing)]);
+  const picked: string[] = [];
+  for (const sentence of [...pool].sort((a, b) => cardScore(b) - cardScore(a))) {
+    if (picked.length >= middleCount) break;
+    const stem = stemOf(sentence);
+    if (stems.has(stem)) continue;
+    stems.add(stem);
+    picked.push(sentence);
+  }
   const middle = pool.filter((sentence) => picked.includes(sentence));
 
   const transitions: MotionTransition[] = ["cut-the-curve", "waterfall", "rack-focus"];
@@ -412,7 +440,14 @@ export async function runMotionStory(input: {
   // The Hook Lab's scorer picks the opening card. The model's own hook competes
   // with its alternates and the piece's first line; the strongest goes on screen.
   const hookOnScreen = beats[0].lines.join(" ");
-  const hookCandidates = rankHooks([hookOnScreen, ...draft.hookCandidates, sentencesOf(input.text)[0] ?? ""]);
+  // The payoff can't double as the hook: the film would say its one line twice.
+  const payoff = beats[beats.length - 1];
+  const payoffText = normalizeForTrace(`${payoff.lines.join(" ")} ${payoff.sourceQuote}`);
+  const hookCandidates = rankHooks(
+    [hookOnScreen, ...draft.hookCandidates, sentencesOf(input.text)[0] ?? ""].filter(
+      (candidate) => !payoffText.includes(normalizeForTrace(candidate).replace(/[.!?]$/, ""))
+    )
+  );
   const best = hookCandidates[0];
   if (best && best.text !== hookOnScreen && best.score > headlineScore(hookOnScreen).score) {
     beats[0] = { ...beats[0], lines: toCardLines(best.text, 12), onScreenText: toCardLines(best.text, 12).join(" / ") };

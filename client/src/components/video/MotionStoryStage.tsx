@@ -74,7 +74,7 @@ export function MotionStoryStage({ project, busy, onRegenerate, onSave, onCheck,
 
   const useHook = (text: string) => {
     const words = text.trim().split(/\s+/);
-    const perLine = Math.min(7, Math.max(3, Math.ceil(words.length / 3)));
+    const perLine = Math.min(5, Math.max(2, Math.ceil(words.length / 3)));
     const lines: string[] = [];
     for (let i = 0; i < words.length; i += perLine) lines.push(words.slice(i, i + perLine).join(" "));
     editBeat(0, { lines: lines.slice(0, 3) });
