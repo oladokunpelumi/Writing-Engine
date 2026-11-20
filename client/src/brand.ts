@@ -7,7 +7,7 @@ export const brandCopy = {
   arcReflection: "You brought the raw material; Co-Create helped it find its shape."
 };
 
-export type MoveKey = "sharpen" | "refine" | "hooks" | "desire" | "headline" | "images" | "scan" | "score";
+export type MoveKey = "sharpen" | "refine" | "hooks" | "desire" | "headline" | "images" | "scan" | "score" | "gate";
 
 export const polishMoves: Array<{
   key: MoveKey;
@@ -22,6 +22,7 @@ export const polishMoves: Array<{
   { key: "headline", label: "Name it", group: "Dress", intent: "Find the title that earns the open." },
   { key: "images", label: "Make it visible", group: "Dress", intent: "Turn the piece into a coherent visual story." },
   { key: "scan", label: "Make it skimmable", group: "Check", intent: "Respect the scroll — short open, signposts, varied rhythm." },
-  { key: "score", label: "Clear the static", group: "Check", intent: "Find the generic fog and clean it out." }
+  { key: "score", label: "Clear the static", group: "Check", intent: "Find the generic fog and clean it out." },
+  { key: "gate", label: "Is it postable?", group: "Check", intent: "Adjudicate every defect, then decide if it clears the bar." }
 ];
 

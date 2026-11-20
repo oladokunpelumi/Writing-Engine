@@ -37,7 +37,9 @@ export const ShowInputSchema = z.object({
   recipeId: z.string().optional()
 });
 
-export const PostStatusSchema = z.enum(["imported", "draft", "published"]);
+// "ready" sits between draft and published: the piece cleared the publish gate
+// and is queued to post. Reaching it requires a gate verdict or an override.
+export const PostStatusSchema = z.enum(["imported", "draft", "ready", "published"]);
 export const ScheduleStatusSchema = z.enum(["idea", "drafting", "ready", "published"]);
 export const BriefModeSchema = z.enum(["new", "expand"]);
 export const TopicIdeaTypeSchema = z.enum(["new", "expand"]);
@@ -64,7 +66,12 @@ export const PromptStageSchema = z.enum([
   "study-skill",
   "video-reference",
   "video-script",
-  "video-shots"
+  "video-shots",
+  "video-ingest",
+  "video-treatment",
+  "video-storyboard",
+  "video-adaptation",
+  "adjudicate"
 ]);
 
 export const PostSchema = z.object({
@@ -86,6 +93,12 @@ export const PostSchema = z.object({
       socialBlurb: z.string()
     })
     .optional(),
+  /** Publish-gate verdict recorded when the piece last cleared or was blocked. */
+  gateScore: z.number().int().min(1).max(7).optional(),
+  gateReason: z.string().optional(),
+  /** Set when a writer consciously overrode a blocking verdict, with the why. */
+  gateOverride: z.string().optional(),
+  gatedAt: isoDate.optional(),
   createdAt: isoDate,
   updatedAt: isoDate,
   publishedAt: isoDate.optional()
@@ -520,6 +533,65 @@ export const ScannabilityReportSchema = z.object({
   reasons: z.array(z.string())
 });
 
+// ---- Adjudicated quality gate (Content Grading V2 → production) ----
+// A finding follows the field kit's five-part point shape:
+// location → exact wording → mechanism → reader effect → improvement direction.
+export const AdjudicatedFindingSchema = z.object({
+  location: z.string(),
+  quote: z.string(),
+  bucket: z.number().int().min(1).max(4).optional(),
+  /** Sub-pattern code from the four-bucket index, e.g. S2.3. */
+  code: z.string().optional(),
+  /** The named cause. "Reads like AI" is a symptom, not a mechanism. */
+  mechanism: z.string(),
+  effect: z.string().default(""),
+  /** Direction only — never a drafted replacement sentence. */
+  direction: z.string().default(""),
+  gate: z.string().optional(),
+  source: z.enum(["scanner", "adjudicator"]).default("scanner")
+});
+
+export const LocatedStrengthSchema = z.object({
+  location: z.string(),
+  quote: z.string(),
+  why: z.string()
+});
+
+export const AdjudicationReportSchema = z.object({
+  format: z.string().default("essay"),
+  unitsScanned: z.number().default(0),
+  candidates: z.number().default(0),
+  findings: z.array(AdjudicatedFindingSchema).default([]),
+  /** Share of units flagged — the module's base-rate calibration aid. */
+  flaggedShare: z.number().default(0),
+  baseRateBand: z.tuple([z.number(), z.number()]).default([0.05, 0.35]),
+  baseRateNote: z.string().optional(),
+  strength: LocatedStrengthSchema.optional(),
+  provider: z.enum(["mock", "openrouter"]).default("mock"),
+  cost: z.number().optional()
+});
+
+/** The 1–7 publish ladder, its tie-break, and the gate decision. */
+export const PublishVerdictSchema = z.object({
+  score: z.number().int().min(1).max(7),
+  /** Sentence-hygiene sub-score (the 5×10 anti-slop rubric) that feeds the ladder. */
+  hygiene: z.number().default(0),
+  ready: z.boolean().default(false),
+  /** Named reason a piece did or did not clear — never a bare number. */
+  reason: z.string().default(""),
+  tieBreak: z.string().optional(),
+  ceiling: z.string().optional(),
+  synthesis: z
+    .object({ claim: z.boolean(), proof: z.boolean(), compression: z.boolean(), ceiling: z.number() })
+    .optional(),
+  criticalCount: z.number().default(0)
+});
+
+export const GateResponseSchema = z.object({
+  report: AdjudicationReportSchema,
+  verdict: PublishVerdictSchema
+});
+
 export const ScannabilityPassResponseSchema = z.object({
   content: z.string(),
   provider: z.enum(["mock", "openrouter"]),
@@ -852,9 +924,15 @@ export const VideoScriptSchema = z.object({
 
 // One ~8s Veo shot = one script beat: the spoken line + a Veo-ready visual prompt.
 export const VideoShotSchema = z.object({
+  id: z.string().optional(),
+  sceneId: z.string().optional(),
+  scriptKind: z.enum(["master", "adaptation"]).optional(),
+  scriptId: z.string().optional(),
   index: z.number(),
   spokenLine: z.string().default(""),
   visualPrompt: z.string(),
+  genericPrompt: z.string().optional(),
+  aspectRatio: z.enum(["16:9", "9:16", "1:1"]).optional(),
   audioCue: z.string().default(""),
   onScreenText: z.string().default(""),
   durationSec: z.number().default(8),
@@ -863,8 +941,223 @@ export const VideoShotSchema = z.object({
 export const ShotListSchema = z.object({ shots: z.array(VideoShotSchema).default([]) });
 
 export const VideoSourceTypeSchema = z.enum(["piece", "product"]);
+
+// ---- BUILD 2 & V2: Video Studio Workspace ----
+export const VideoFormatSchema = z.enum([
+  "documentary",
+  "cinematic",
+  "explainer",
+  "faceless",
+  "interview",
+  "educational",
+  "ugc"
+]);
+
+export const VideoSourceRoleSchema = z.enum([
+  "evidence",
+  "narrative",
+  "visual",
+  "reference"
+]);
+
+export const VideoSourceSchema = z.object({
+  id: z.string(),
+  projectId: z.string(),
+  filename: z.string(),
+  mimeType: z.string(),
+  sizeBytes: z.number(),
+  checksum: z.string(),
+  roles: z.array(VideoSourceRoleSchema).default(["evidence"]),
+  extractionStatus: z.enum(["pending", "extracting", "completed", "failed"]).default("pending"),
+  warnings: z.array(z.string()).default([]),
+  extractedText: z.string().default(""),
+  extractedImages: z
+    .array(
+      z.object({
+        id: z.string(),
+        name: z.string(),
+        mimeType: z.string(),
+        width: z.number().optional(),
+        height: z.number().optional(),
+        ocrText: z.string().optional(),
+        ocrConfidence: z.number().min(0).max(1).optional(),
+        ocrStatus: z.enum(["completed", "failed", "not-required"]).optional(),
+        locator: z.string().optional(),
+        dataUrl: z.string().optional()
+      })
+    )
+    .default([]),
+  extractedLinks: z
+    .array(
+      z.object({
+        url: z.string(),
+        title: z.string().optional(),
+        status: z.enum(["unverified", "verified", "failed"]).default("unverified"),
+        summary: z.string().optional()
+      })
+    )
+    .default([]),
+  locators: z
+    .array(
+      z.object({
+        id: z.string(),
+        type: z.string(),
+        label: z.string(),
+        startOffset: z.number().optional(),
+        endOffset: z.number().optional(),
+        pageNumber: z.number().optional()
+      })
+    )
+    .default([]),
+  createdAt: isoDate,
+  updatedAt: isoDate
+});
+
+export const VideoEvidenceSchema = z.object({
+  id: z.string(),
+  sourceId: z.string(),
+  sourceFilename: z.string(),
+  role: VideoSourceRoleSchema,
+  locator: z.string(),
+  snippet: z.string(),
+  imageRefId: z.string().optional(),
+  linkUrl: z.string().optional()
+});
+
+export const CreativeBriefSchema = z.object({
+  targetAudience: z.string().default(""),
+  coreObjective: z.string().default(""),
+  tone: z.string().default(""),
+  keyThesis: z.string().default(""),
+  constraints: z.array(z.string()).default([]),
+  narrativeDirection: z.string().default(""),
+  visualDirection: z.string().default(""),
+  visualNotes: z.string().default(""),
+  audioNotes: z.string().default("")
+});
+
+export const TreatmentActSchema = z.object({
+  actNumber: z.number(),
+  actTitle: z.string(),
+  description: z.string(),
+  durationEstimate: z.string().default("")
+});
+
+export const VideoTreatmentSchema = z.object({
+  id: z.string(),
+  type: z.enum(["faithful", "recommended", "bold"]),
+  title: z.string(),
+  logline: z.string(),
+  narrativeArc: z.string(),
+  keyMetaphor: z.string().default(""),
+  structure: z.array(TreatmentActSchema).default([]),
+  rationale: z.string().default(""),
+  proposedChanges: z.array(z.string()).default([]),
+  reliesOnSources: z.array(z.string()).default([])
+});
+
+export const ProductionSceneSchema = z.object({
+  sceneId: z.string(),
+  index: z.number(),
+  title: z.string().default(""),
+  timestampRange: z.string().default(""),
+  narration: z.string().default(""),
+  visualAction: z.string().default(""),
+  onScreenText: z.string().default(""),
+  audioCue: z.string().default(""),
+  evidenceReferences: z.array(z.string()).default([]),
+  generationPrompt: z.string().default(""),
+  locked: z.boolean().default(false)
+});
+
+export const ProductionScriptSchema = z.object({
+  versionId: z.string(),
+  versionNumber: z.number(),
+  scenes: z.array(ProductionSceneSchema).default([]),
+  totalSeconds: z.number().default(600),
+  approved: z.boolean().default(false),
+  approvedAt: isoDate.optional(),
+  createdAt: isoDate
+});
+
+export const VideoAdaptationSchema = z.object({
+  id: z.string(),
+  platform: z.enum(["tiktok", "reels", "shorts", "youtube"]),
+  targetSeconds: z.number().default(60),
+  title: z.string().default(""),
+  scenes: z.array(ProductionSceneSchema).default([]),
+  totalSeconds: z.number().default(60),
+  approved: z.boolean().default(false),
+  createdAt: isoDate
+});
+
+export const VideoProjectStageSchema = z.enum([
+  "sources",
+  "treatments",
+  "master-script",
+  "adaptations",
+  "shots",
+  "export"
+]);
+
+export const VisualBibleSchema = z.object({
+  visualStyle: z.string().default(""),
+  colorPalette: z.array(z.string()).default([]),
+  lighting: z.string().default(""),
+  cameraLanguage: z.string().default(""),
+  typography: z.string().default(""),
+  audioTheme: z.string().default(""),
+  personaGuidelines: z.string().default("")
+});
+
 export const VideoProjectSchema = z.object({
   id: z.string(),
+  ownerId: z.string().default("owner-default"),
+  title: z.string().default("Untitled Video Project"),
+  format: VideoFormatSchema.default("documentary"),
+  audience: z.string().default(""),
+  objective: z.string().default(""),
+  privacyState: z.enum(["private", "public"]).default("private"),
+  externalAiConsent: z.boolean().default(false),
+  primaryOutput: z.enum(["4-8 min", "8-12 min", "12-20 min"]).default("8-12 min"),
+  selectedPlatforms: z.array(z.string()).default(["youtube", "tiktok", "reels", "shorts"]),
+  creativeBrief: CreativeBriefSchema.optional(),
+  sources: z.array(VideoSourceSchema).default([]),
+  treatments: z.array(VideoTreatmentSchema).default([]),
+  selectedTreatmentId: z.string().optional(),
+  selectedTreatment: VideoTreatmentSchema.optional(),
+  visualBible: VisualBibleSchema.optional(),
+  approvalState: z
+    .object({
+      treatmentApproved: z.boolean().default(false),
+      scriptApproved: z.boolean().default(false)
+    })
+    .default({ treatmentApproved: false, scriptApproved: false }),
+  currentStage: VideoProjectStageSchema.default("sources"),
+  masterScript: ProductionScriptSchema.optional(),
+  scriptVersions: z.array(ProductionScriptSchema).default([]),
+  adaptations: z.array(VideoAdaptationSchema).default([]),
+  shots: z.array(VideoShotSchema).default([]),
+  storyboards: z
+    .array(
+      z.object({
+        frameId: z.string(),
+        sceneId: z.string(),
+        shotId: z.string().optional(),
+        visualPrompt: z.string(),
+        keyframeUrl: z.string(),
+        status: z.enum(["pending", "completed", "failed"]).optional(),
+        provider: z.enum(["mock", "openrouter"]).optional(),
+        cost: z.number().optional(),
+        error: z.string().optional()
+      })
+    )
+    .default([]),
+  cost: z.number().optional(),
+  createdAt: isoDate,
+  updatedAt: isoDate,
+
+  // Legacy UGC project compatibility fields
   personaId: z.string().optional(),
   sourceType: VideoSourceTypeSchema.default("piece"),
   sourcePostId: z.string().optional(),
@@ -872,19 +1165,82 @@ export const VideoProjectSchema = z.object({
   reference: ReferenceBlueprintSchema.optional(),
   platform: z.string().default("tiktok"),
   targetSeconds: z.number().default(30),
-  script: VideoScriptSchema.optional(),
-  shots: z.array(VideoShotSchema).default([]),
-  cost: z.number().optional(),
-  createdAt: isoDate,
-  updatedAt: isoDate
+  script: VideoScriptSchema.optional()
 });
+
+export const VideoEvidenceImageSchema = z.object({
+  id: z.string(),
+  projectId: z.string(),
+  sourceId: z.string(),
+  name: z.string(),
+  mimeType: z.string(),
+  width: z.number().optional(),
+  height: z.number().optional(),
+  ocrText: z.string().optional(),
+  ocrConfidence: z.number().optional(),
+  locator: z.string().optional(),
+  url: z.string(),
+  createdAt: isoDate
+});
+
+export const UpdateSourceRoleInputSchema = z.object({
+  roles: z.array(VideoSourceRoleSchema)
+});
+
+export const SelectTreatmentInputSchema = z.object({
+  treatmentId: z.string().min(1)
+});
+
+export const UpdateMasterScriptInputSchema = z.object({
+  scenes: z.array(ProductionSceneSchema)
+});
+
+export const RegenerateSceneInputSchema = z.object({
+  sceneIndex: z.number().int().min(0)
+});
+
 export const VideoProjectInputSchema = z.object({
+  title: z.string().optional(),
+  format: VideoFormatSchema.optional(),
+  audience: z.string().optional(),
+  objective: z.string().optional(),
+  privacyState: z.enum(["private", "public"]).optional(),
+  externalAiConsent: z.boolean().optional(),
+  primaryOutput: z.enum(["4-8 min", "8-12 min", "12-20 min"]).optional(),
+  selectedPlatforms: z.array(z.string()).optional(),
+  creativeBrief: CreativeBriefSchema.optional(),
   personaId: z.string().optional(),
-  sourceType: VideoSourceTypeSchema.default("piece"),
+  sourceType: VideoSourceTypeSchema.optional(),
   sourcePostId: z.string().optional(),
-  sourceText: z.string().default(""),
-  platform: z.string().default("tiktok"),
-  targetSeconds: z.number().default(30)
+  sourceText: z.string().optional(),
+  platform: z.string().optional(),
+  targetSeconds: z.number().optional()
+});
+
+export const VideoProjectUpdateSchema = VideoProjectInputSchema.pick({
+  title: true,
+  format: true,
+  audience: true,
+  objective: true,
+  privacyState: true,
+  externalAiConsent: true,
+  primaryOutput: true,
+  selectedPlatforms: true,
+  creativeBrief: true
+}).partial();
+
+export const GenerateAdaptationInputSchema = z.object({
+  platform: z.enum(["tiktok", "reels", "shorts", "youtube"]),
+  targetSeconds: z.union([z.literal(30), z.literal(60), z.literal(90)])
+});
+
+export const GenerateShotsInputSchema = z.object({
+  scriptKind: z.enum(["master", "adaptation"]).default("master"),
+  scriptId: z.string().optional()
+});
+
+export const GenerateStoryboardInputSchema = z.object({
+  shotIndexes: z.array(z.number().int().nonnegative()).min(1).optional()
 });
 
 export type VoiceProfile = z.infer<typeof VoiceProfileSchema>;
@@ -901,6 +1257,20 @@ export type ShotList = z.infer<typeof ShotListSchema>;
 export type VideoProject = z.infer<typeof VideoProjectSchema>;
 export type VideoProjectInput = z.infer<typeof VideoProjectInputSchema>;
 export type VideoSourceType = z.infer<typeof VideoSourceTypeSchema>;
+export type VideoEvidenceImage = z.infer<typeof VideoEvidenceImageSchema>;
+export type VideoFormat = z.infer<typeof VideoFormatSchema>;
+export type VideoSourceRole = z.infer<typeof VideoSourceRoleSchema>;
+export type VideoSource = z.infer<typeof VideoSourceSchema>;
+export type VideoEvidence = z.infer<typeof VideoEvidenceSchema>;
+export type CreativeBrief = z.infer<typeof CreativeBriefSchema>;
+export type TreatmentAct = z.infer<typeof TreatmentActSchema>;
+export type VideoTreatment = z.infer<typeof VideoTreatmentSchema>;
+export type ProductionScene = z.infer<typeof ProductionSceneSchema>;
+export type ProductionScript = z.infer<typeof ProductionScriptSchema>;
+export type VideoAdaptation = z.infer<typeof VideoAdaptationSchema>;
+export type VideoProjectStage = z.infer<typeof VideoProjectStageSchema>;
+export type VisualBible = z.infer<typeof VisualBibleSchema>;
+
 export type GridContinuity = z.infer<typeof GridContinuitySchema>;
 export type GridSignalsRequest = z.infer<typeof GridSignalsRequestSchema>;
 export type GridSynthesisRequest = z.infer<typeof GridSynthesisRequestSchema>;
@@ -991,6 +1361,11 @@ export type DesireSection = z.infer<typeof DesireSectionSchema>;
 export type DesireReport = z.infer<typeof DesireReportSchema>;
 export type DesirePassResponse = z.infer<typeof DesirePassResponseSchema>;
 export type ScannabilityReport = z.infer<typeof ScannabilityReportSchema>;
+export type AdjudicatedFinding = z.infer<typeof AdjudicatedFindingSchema>;
+export type LocatedStrength = z.infer<typeof LocatedStrengthSchema>;
+export type AdjudicationReport = z.infer<typeof AdjudicationReportSchema>;
+export type PublishVerdict = z.infer<typeof PublishVerdictSchema>;
+export type GateResponse = z.infer<typeof GateResponseSchema>;
 export type ScannabilityPassResponse = z.infer<typeof ScannabilityPassResponseSchema>;
 export type AttentionLineScore = z.infer<typeof AttentionLineScoreSchema>;
 export type OutputRevision = z.infer<typeof OutputRevisionSchema>;

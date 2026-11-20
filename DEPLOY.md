@@ -74,6 +74,21 @@ the local pglite database to disk (otherwise it's in-memory).
 | `OPENROUTER_API_KEY` | Your key — this is the spend. |
 | `MAX_OUTPUT_TOKENS` | Caps output tokens per call (cost guardrail). |
 | `MODEL_*` | Per-stage model routing (any OpenRouter slug). |
+| `MODEL_VIDEO_INGEST` | Optional multimodal OCR model override. |
+| `MODEL_VIDEO_TREATMENT` | Optional treatment/visual-bible model override. |
+| `MODEL_VIDEO_SCRIPT` | Optional master-script model override. |
+| `MODEL_VIDEO_ADAPTATION` | Optional platform-adaptation model override. |
+| `MODEL_VIDEO_SHOTS` | Optional shot-prompt model override. |
+| `MODEL_IMAGE` | Storyboard keyframe image model. |
+| `IMAGE_COST_USD` | Fallback cost estimate when the image provider omits cost. |
+
+## Video Studio release checklist
+
+- Keep `AUTH_REQUIRED=true`; uploads and private evidence/storyboard previews require authenticated requests.
+- Confirm database backups inherit the same access controls and retention policy as the primary database.
+- Verify source deletion removes its extracted chunks and evidence previews; project deletion removes all Video Studio assets.
+- Use a non-confidential fixture for staging AI smoke tests. The local Fabrizio/Pletti acceptance test copies the private source to temporary storage and never commits it.
+- Start with invite-only access. External AI processing requires explicit consent on each project, and link verification remains opt-in.
 
 ## Updating
 

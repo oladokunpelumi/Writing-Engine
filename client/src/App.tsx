@@ -6,6 +6,7 @@ import {
   ChevronRight,
   Clapperboard,
   Clipboard,
+  Copy,
   Database,
   Download,
   FileText,
@@ -21,11 +22,13 @@ import {
   Menu,
   PenLine,
   Plus,
+  RefreshCw,
   Save,
   Search,
   Settings,
   Share2,
   SlidersHorizontal,
+  Shield,
   Sparkles,
   Target,
   Trash2,
@@ -43,9 +46,14 @@ import type {
   ConceptNode,
   DesireReport,
   ScannabilityReport,
+  AdjudicationReport,
+  PublishVerdict,
   VideoPersona,
   VideoPersonaInput,
   VideoProject,
+  VideoProjectStage,
+  VideoFormat,
+  VideoSourceRole,
   ReferenceBlueprint,
   PersonaSuggestion,
   Experiment,
@@ -74,6 +82,15 @@ import type {
   WorkflowRunResponse
 } from "../../shared/src";
 import { DEFAULT_VOICE_PROFILE } from "../../shared/src";
+
+import { ProjectLibrary } from "./components/video/ProjectLibrary";
+import { SourceIntake } from "./components/video/SourceIntake";
+import { ExtractionReview } from "./components/video/ExtractionReview";
+import { TreatmentComparison } from "./components/video/TreatmentComparison";
+import { ScriptEditor } from "./components/video/ScriptEditor";
+import { AdaptationsView } from "./components/video/AdaptationsView";
+import { StoryboardGallery } from "./components/video/StoryboardGallery";
+import { ExportPackageView } from "./components/video/ExportPackageView";
 import { api, getToken, setToken } from "./api";
 import { brandCopy, polishMoves, type MoveKey } from "./brand";
 
@@ -138,6 +155,8 @@ export default function App() {
   const [hooks, setHooks] = useState<ExperimentResult[]>([]);
   const [headlines, setHeadlines] = useState<ExperimentResult[]>([]);
   const [scannability, setScannability] = useState<ScannabilityReport | null>(null);
+  const [gate, setGate] = useState<{ report: AdjudicationReport; verdict: PublishVerdict } | null>(null);
+  const [gateRejected, setGateRejected] = useState<Array<{ pattern: string; evidence: string }>>([]);
   const [videoSeedText, setVideoSeedText] = useState("");
   const [retrieved, setRetrieved] = useState<RetrievedPost[]>([]);
   const [citations, setCitations] = useState<CitationFlag[]>([]);
@@ -509,6 +528,15 @@ export default function App() {
                 setLastGenerationId(res.generationId);
                 await refresh();
               })}
+              gate={gate}
+              gateRejected={gateRejected}
+              onAdjudicate={() => runStep("Adjudicating", () => api.gateAdjudicate(finalForPackage, { postId: draftPostId }), (res) => { setGate(res); setGateRejected([]); })}
+              onGateRevise={() => runStep("Fixing flagged spots", () => api.gateRevise(finalForPackage, { postId: draftPostId }), async (res) => {
+                if (res.changed) setFinalText(res.text);
+                setGate(res.after);
+                setGateRejected(res.rejected ?? []);
+                await refresh();
+              })}
               scannabilityReport={scannability}
               onCheckScannability={() => runStep("Checking scannability", () => api.scannabilityScore(finalForPackage), setScannability)}
               onScannabilityPass={() => runStep("Skimmable pass", () => api.scannabilityPass(finalForPackage, draftPostId), async (res) => {
@@ -724,6 +752,10 @@ function ComposeView(props: {
   desireReport: DesireReport | null;
   onCheckDesire: () => void;
   onDesirePass: () => void;
+  gate: { report: AdjudicationReport; verdict: PublishVerdict } | null;
+  gateRejected: Array<{ pattern: string; evidence: string }>;
+  onAdjudicate: () => void;
+  onGateRevise: () => void;
   scannabilityReport: ScannabilityReport | null;
   onCheckScannability: () => void;
   onScannabilityPass: () => void;
@@ -769,6 +801,7 @@ function ComposeView(props: {
     headline: <Type size={15} />,
     images: <Image size={15} />,
     scan: <ListOrdered size={15} />,
+    gate: <Shield size={15} />,
     score: <Layers size={15} />
   };
 
@@ -939,6 +972,16 @@ function ComposeView(props: {
           ) : null}
           {move === "headline" ? (
             <HeadlineLabPanel titles={props.headlines} ready={Boolean(working)} busy={props.busy} onGenerate={props.onGenerateHeadlines} onUse={props.onUseHeadline} />
+          ) : null}
+          {move === "gate" ? (
+            <PublishGatePanel
+              gate={props.gate}
+              rejected={props.gateRejected}
+              ready={Boolean(working)}
+              busy={props.busy}
+              onAdjudicate={props.onAdjudicate}
+              onRevise={props.onGateRevise}
+            />
           ) : null}
           {move === "scan" ? (
             <ScannabilityPanel report={props.scannabilityReport} ready={Boolean(working)} busy={props.busy} onCheck={props.onCheckScannability} onPass={props.onScannabilityPass} />
@@ -1318,10 +1361,12 @@ function LibraryView(props: {
           <select className="input" value={statusFilter} onChange={(event) => setStatusFilter(event.target.value as typeof statusFilter)}>
             <option value="all">all ({props.posts.length})</option>
             <option value="draft">draft</option>
+            <option value="ready">ready to post</option>
             <option value="published">published</option>
             <option value="imported">imported</option>
           </select>
         </label>
+        <PublishQueuePanel posts={props.posts} />
       </section>
       <section className={`grid gap-3 ${instrumentsFirst ? "order-2" : "order-1"}`}>
         <div className="panel-piece">
@@ -1429,6 +1474,7 @@ function PostDetailModal({
             <span className="label">Status</span>
             <select className="input" value={status} onChange={(event) => setStatus(event.target.value as Post["status"])}>
               <option value="draft">draft</option>
+              <option value="ready">ready to post</option>
               <option value="published">published</option>
               <option value="imported">imported</option>
             </select>
@@ -2691,8 +2737,7 @@ function ScannabilityPanel({
   );
 }
 
-// UGC Video Studio (BUILD 2): a piece or product brief → script → Veo shot list
-// → keyframe storyboard, for Google Flow / Veo 3. Gated like The Grid.
+// Video Studio V2: Document-to-Video Production Workspace
 function VideoStudioView({
   runStep,
   busy,
@@ -2704,253 +2749,583 @@ function VideoStudioView({
   posts: Post[];
   seedText: string;
 }) {
-  const [personas, setPersonas] = useState<VideoPersona[]>([]);
-  const [personaId, setPersonaId] = useState("");
-  const emptyPersona: VideoPersonaInput = { name: "", appearance: "", wardrobe: "", setting: "", vocalStyle: "", mannerisms: "", visualStyle: "" };
-  const [personaForm, setPersonaForm] = useState<VideoPersonaInput>(emptyPersona);
-  const [showEditor, setShowEditor] = useState(false);
-  const [sourceType, setSourceType] = useState<"piece" | "product">("piece");
-  const [sourcePostId, setSourcePostId] = useState("");
-  const [productText, setProductText] = useState("");
-  const [referenceText, setReferenceText] = useState("");
-  const [reference, setReference] = useState<ReferenceBlueprint | null>(null);
-  const [platform, setPlatform] = useState("tiktok");
-  const [targetSeconds, setTargetSeconds] = useState(30);
-  const [project, setProject] = useState<VideoProject | null>(null);
-  const [casts, setCasts] = useState<PersonaSuggestion[]>([]);
+  const [projects, setProjects] = useState<VideoProject[]>([]);
+  const [currentProject, setCurrentProject] = useState<VideoProject | null>(null);
+  const [activeStage, setActiveStage] = useState<VideoProjectStage>("sources");
+  const [showLibrary, setShowLibrary] = useState(false);
+  const [exportPkg, setExportPkg] = useState<{ markdown: string; json: any } | null>(null);
 
-  useEffect(() => {
-    void api.personas().then(setPersonas).catch(() => undefined);
-  }, []);
-  useEffect(() => {
-    if (seedText.trim()) {
-      setSourceType("piece");
-      setSourcePostId("");
+  const loadProjects = async () => {
+    try {
+      const list = await api.videoProjects();
+      setProjects(list);
+      if (list.length > 0) {
+        setCurrentProject((active) => list.find((project) => project.id === active?.id) ?? list[0]);
+      }
+    } catch {
+      // ignore
     }
-  }, [seedText]);
+  };
 
-  const pieceText = sourcePostId ? posts.find((p) => p.id === sourcePostId)?.body ?? "" : seedText;
-  const sourceText = sourceType === "piece" ? pieceText : productText;
-  const persona = personas.find((p) => p.id === personaId);
-  const copy = (text: string) => navigator.clipboard.writeText(text);
-  const allPrompts = (project?.shots ?? [])
-    .map((s, i) => `SHOT ${i + 1} (~${s.durationSec}s)\n${s.visualPrompt}\n[on-screen: ${s.onScreenText}]`)
-    .join("\n\n———\n\n");
-  const scriptText = project?.script
-    ? [`HOOK: ${project.script.hook}`, ...project.script.beats.map((b, i) => `${i + 1}. ${b.spokenLine}`), `CTA: ${project.script.cta}`].join("\n")
-    : "";
+  useEffect(() => {
+    void loadProjects();
+  }, []);
+
+  useEffect(() => {
+    if (currentProject) {
+      setActiveStage(currentProject.currentStage || "sources");
+      setExportPkg(null);
+    }
+  }, [currentProject?.id]);
+
+  const handleCreateProject = async (input: {
+    title: string;
+    format: VideoFormat;
+    audience: string;
+    objective: string;
+    primaryOutput: "4-8 min" | "8-12 min" | "12-20 min";
+    privacyState: "private" | "public";
+    externalAiConsent: boolean;
+  }) => {
+    await runStep(
+      "Creating Project",
+      () =>
+        api.createVideoProject({
+          ...input,
+          selectedPlatforms: ["youtube", "tiktok", "reels", "shorts"]
+        }),
+      (created) => {
+        setProjects([created, ...projects]);
+        setCurrentProject(created);
+        setActiveStage("sources");
+      }
+    );
+  };
+
+  const handleFileUpload = async (files: FileList | null, roles?: VideoSourceRole[]) => {
+    if (!files || files.length === 0 || !currentProject) return;
+    const formData = new FormData();
+    for (let i = 0; i < Math.min(files.length, 10); i++) {
+      formData.append("files", files[i]);
+    }
+    if (roles) {
+      formData.append("roles", JSON.stringify(roles));
+    }
+    await runStep(
+      "Uploading & Extracting Documents",
+      () => api.uploadVideoSources(currentProject.id, formData),
+      (res) => {
+        setCurrentProject(res.project);
+      }
+    );
+  };
+
+  const handlePasteText = async (text: string, title?: string, roles?: VideoSourceRole[]) => {
+    if (!text.trim() || !currentProject) return;
+    await runStep(
+      "Adding Text Source",
+      () => api.addVideoTextSource(currentProject.id, text, title || "Pasted Source", roles),
+      (res) => {
+        setCurrentProject(res.project);
+      }
+    );
+  };
+
+  const handleImportLibraryPost = async (postId: string, roles?: VideoSourceRole[]) => {
+    if (!postId || !currentProject) return;
+    const post = posts.find((p) => p.id === postId);
+    if (!post) return;
+    await runStep(
+      "Importing Library Piece",
+      () => api.addVideoTextSource(currentProject.id, post.body, post.title, roles),
+      (res) => {
+        setCurrentProject(res.project);
+      }
+    );
+  };
+
+  const handleSaveDirections = async (narrativeDirection: string, visualDirection: string) => {
+    if (!currentProject) return;
+    await runStep(
+      "Saving Creative Direction",
+      () =>
+        api.updateVideoProject(currentProject.id, {
+          creativeBrief: {
+            targetAudience: currentProject.creativeBrief?.targetAudience ?? currentProject.audience,
+            coreObjective: currentProject.creativeBrief?.coreObjective ?? currentProject.objective,
+            tone: currentProject.creativeBrief?.tone ?? "",
+            keyThesis: currentProject.creativeBrief?.keyThesis ?? currentProject.objective,
+            constraints: currentProject.creativeBrief?.constraints ?? [],
+            narrativeDirection,
+            visualDirection,
+            visualNotes: currentProject.creativeBrief?.visualNotes ?? "",
+            audioNotes: currentProject.creativeBrief?.audioNotes ?? ""
+          }
+        }),
+      (updated) => setCurrentProject(updated)
+    );
+  };
+
+  const handleUpdateSourceRoles = async (sourceId: string, roles: VideoSourceRole[]) => {
+    await api.updateVideoSourceRoles(sourceId, roles);
+    await loadProjects();
+  };
+
+  const handleDeleteSource = async (sourceId: string) => {
+    await api.deleteVideoSource(sourceId);
+    await loadProjects();
+  };
+
+  const handleVerifyLinks = async () => {
+    if (!currentProject) return;
+    await api.verifyVideoLinks(currentProject.id);
+    await loadProjects();
+  };
+
+  const handleGenerateTreatments = async () => {
+    if (!currentProject) return;
+    await runStep(
+      "Developing 3 Treatments",
+      () => api.generateVideoTreatments(currentProject.id),
+      (updated) => {
+        setCurrentProject(updated);
+        setActiveStage("treatments");
+      }
+    );
+  };
+
+  const handleSelectTreatment = async (treatmentId: string) => {
+    if (!currentProject) return;
+    await runStep(
+      "Approving Treatment",
+      () => api.selectVideoTreatment(currentProject.id, treatmentId),
+      (updated) => {
+        setCurrentProject(updated);
+        setActiveStage("master-script");
+      }
+    );
+  };
+
+  const handleGenerateMasterScript = async () => {
+    if (!currentProject) return;
+    await runStep(
+      "Drafting Master Script",
+      () => api.generateVideoMasterScript(currentProject.id),
+      (updated) => {
+        setCurrentProject(updated);
+      }
+    );
+  };
+
+  const handleUpdateMasterScript = async (scenes: any[]) => {
+    if (!currentProject) return;
+    const updated = await api.updateVideoMasterScript(currentProject.id, scenes);
+    setCurrentProject(updated);
+  };
+
+  const handleRegenerateScene = async (sceneIndex: number) => {
+    if (!currentProject) return;
+    await runStep(
+      "Regenerating Scene",
+      () => api.regenerateVideoScene(currentProject.id, sceneIndex),
+      (updated) => {
+        setCurrentProject(updated);
+      }
+    );
+  };
+
+  const handleApproveMasterScript = async () => {
+    if (!currentProject) return;
+    await runStep(
+      "Approving Master Script",
+      () => api.approveVideoMasterScript(currentProject.id),
+      (updated) => {
+        setCurrentProject(updated);
+        setActiveStage("adaptations");
+      }
+    );
+  };
+
+  const handleSaveScriptVersion = async () => {
+    if (!currentProject) return;
+    await runStep("Saving Script Version", () => api.saveVideoScriptVersion(currentProject.id), setCurrentProject);
+  };
+
+  const handleRestoreScriptVersion = async (versionId: string) => {
+    if (!currentProject) return;
+    await runStep(
+      "Restoring Script Version",
+      () => api.restoreVideoScriptVersion(currentProject.id, versionId),
+      setCurrentProject
+    );
+  };
+
+  const handleGenerateAdaptation = async (platform: "tiktok" | "reels" | "shorts" | "youtube", targetSeconds: number) => {
+    if (!currentProject) return;
+    await runStep(
+      "Generating Adaptation",
+      () => api.generateVideoAdaptation(currentProject.id, platform, targetSeconds),
+      (updated) => {
+        setCurrentProject(updated);
+      }
+    );
+  };
+
+  const handleGenerateShots = async (scriptKind: "master" | "adaptation", scriptId?: string) => {
+    if (!currentProject) return;
+    await runStep(
+      "Generating Shot Prompts",
+      () => api.generateVideoShotsV2(currentProject.id, scriptKind, scriptId),
+      (updated) => {
+        setCurrentProject(updated);
+        setActiveStage("shots");
+      }
+    );
+  };
+
+  const handleGenerateStoryboards = async (shotIndexes: number[]) => {
+    if (!currentProject) return;
+    await runStep(
+      "Generating Selected Storyboards",
+      () => api.generateVideoStoryboardV2(currentProject.id, shotIndexes),
+      (updated) => setCurrentProject(updated)
+    );
+  };
+
+  const handleLoadExport = async () => {
+    if (!currentProject) return;
+    await runStep(
+      "Building Export Package",
+      () => api.exportVideoPackage(currentProject.id),
+      (pkg) => {
+        setExportPkg(pkg);
+        setActiveStage("export");
+      }
+    );
+  };
 
   return (
-    <div className="grid gap-5">
-      <div className="panel-piece">
-        <span className="badge-dusk">Video Studio</span>
-        <h1 className="mt-2 font-display text-2xl font-bold">Turn a piece or a product into a UGC video.</h1>
-        <p className="mt-1 text-sm text-slate-600">Script → Veo shot list → keyframe storyboard, ready to drop into Google Flow.</p>
+    <div className="grid gap-6">
+      {/* Compact Header Panel */}
+      <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-2xs flex flex-wrap items-center justify-between gap-4">
+        <div>
+          <div className="flex items-center gap-2">
+            <span className="rounded bg-indigo-100 px-2.5 py-0.5 text-xs font-bold text-indigo-800">
+              Video Studio V2
+            </span>
+            <span className="text-xs text-slate-400">Document-to-Video Production Workspace</span>
+          </div>
+          <h1 className="mt-1 font-display text-2xl font-bold text-slate-900">
+            {currentProject ? currentProject.title : "Document-to-Video Workspace"}
+          </h1>
+        </div>
+
+        <div className="flex flex-wrap items-center gap-2">
+          <button
+            className="rounded-xl border border-slate-300 bg-white px-4 py-2 text-xs font-bold text-slate-700 hover:bg-slate-50 transition-colors shadow-2xs"
+            onClick={() => setShowLibrary((v) => !v)}
+          >
+            <Library size={15} className="inline mr-1.5" /> Project Library ({projects.length})
+          </button>
+        </div>
       </div>
 
-      <section className="desk-panel grid gap-4">
-        <div className="flex flex-wrap gap-2">
-          <button className={sourceType === "piece" ? "btn" : "rounded-md border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-600"} onClick={() => setSourceType("piece")}>From a piece</button>
-          <button className={sourceType === "product" ? "btn" : "rounded-md border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-600"} onClick={() => setSourceType("product")}>From a product</button>
-        </div>
-        {sourceType === "piece" ? (
-          <label className="block">
-            <span className="label">Source piece</span>
-            <select className="input" value={sourcePostId} onChange={(e) => setSourcePostId(e.target.value)}>
-              <option value="">{seedText.trim() ? "Current piece (from Done)" : "Select a Library piece"}</option>
-              {posts.map((p) => <option key={p.id} value={p.id}>{p.title}</option>)}
-            </select>
-          </label>
-        ) : (
-          <label className="block">
-            <span className="label">Product / app brief</span>
-            <textarea className="input min-h-24" value={productText} placeholder="What is it, who's it for, the one benefit, the CTA…" onChange={(e) => setProductText(e.target.value)} />
-          </label>
-        )}
+      {/* Project Library Drawer */}
+      {showLibrary && (
+        <ProjectLibrary
+          projects={projects}
+          currentProject={currentProject}
+          onSelectProject={(p) => {
+            setCurrentProject(p);
+            setShowLibrary(false);
+          }}
+          onCreateProject={handleCreateProject}
+          onDuplicateProject={async (id) => {
+            await runStep("Duplicating Project", () => api.duplicateVideoProject(id), (dup) => {
+              setProjects([dup, ...projects]);
+              setCurrentProject(dup);
+            });
+          }}
+          onDeleteProject={async (id) => {
+            await runStep("Deleting Project", () => api.deleteVideoProject(id), () => {
+              setProjects(projects.filter((x) => x.id !== id));
+              if (currentProject?.id === id) setCurrentProject(null);
+            });
+          }}
+          onClose={() => setShowLibrary(false)}
+        />
+      )}
 
-        <div className="grid gap-2 sm:grid-cols-2">
-          <label className="block">
-            <span className="label">Persona (AI influencer)</span>
-            <select className="input" value={personaId} onChange={(e) => setPersonaId(e.target.value)}>
-              <option value="">No persona</option>
-              {personas.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
-            </select>
-          </label>
-          <div className="flex items-end gap-2">
-            <button className="btn" onClick={() => { setPersonaForm(persona ? { ...persona } : emptyPersona); setShowEditor((v) => !v); }}>
-              <Settings size={14} /> {persona ? "Edit" : "New persona"}
-            </button>
-          </div>
-        </div>
+      {/* Active Workspace Stepper Navigation */}
+      {currentProject ? (
+        <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-2xs grid gap-6">
+          <nav className="flex flex-wrap border-b border-slate-200 pb-3 gap-2">
+            {[
+              { id: "sources", label: "1. Sources & Review", unlocked: true, count: currentProject.sources?.length || 0 },
+              { id: "treatments", label: `2. Treatments (${currentProject.treatments?.length || 0})`, unlocked: (currentProject.sources?.length || 0) > 0 },
+              { id: "master-script", label: "3. Master Script", unlocked: Boolean(currentProject.selectedTreatment) },
+              { id: "adaptations", label: "4. Adaptations", unlocked: Boolean(currentProject.masterScript?.approved) },
+              { id: "shots", label: "5. Shots & Storyboard", unlocked: Boolean(currentProject.masterScript?.approved) },
+              { id: "export", label: "6. Export Package", unlocked: Boolean(currentProject.masterScript?.approved) }
+            ].map((st) => (
+              <button
+                key={st.id}
+                disabled={!st.unlocked}
+                className={`rounded-xl px-4 py-2 text-xs font-bold transition-all ${
+                  activeStage === st.id
+                    ? "bg-indigo-600 text-white shadow-xs"
+                    : st.unlocked
+                    ? "bg-slate-100 text-slate-700 hover:bg-slate-200"
+                    : "bg-slate-50 text-slate-400 cursor-not-allowed opacity-60"
+                }`}
+                onClick={() => setActiveStage(st.id as VideoProjectStage)}
+              >
+                {st.label} {!st.unlocked ? "🔒" : ""}
+              </button>
+            ))}
+          </nav>
 
-        {showEditor ? (
-          <div className="rounded-md border border-slate-200 bg-white p-3">
-            <Field label="Name" value={personaForm.name} onChange={(v) => setPersonaForm({ ...personaForm, name: v })} />
-            <Field label="Appearance" value={personaForm.appearance ?? ""} onChange={(v) => setPersonaForm({ ...personaForm, appearance: v })} />
-            <Field label="Wardrobe" value={personaForm.wardrobe ?? ""} onChange={(v) => setPersonaForm({ ...personaForm, wardrobe: v })} />
-            <Field label="Setting" value={personaForm.setting ?? ""} onChange={(v) => setPersonaForm({ ...personaForm, setting: v })} />
-            <Field label="Vocal style" value={personaForm.vocalStyle ?? ""} onChange={(v) => setPersonaForm({ ...personaForm, vocalStyle: v })} />
-            <Field label="Mannerisms" value={personaForm.mannerisms ?? ""} onChange={(v) => setPersonaForm({ ...personaForm, mannerisms: v })} />
-            <Field label="Visual style" value={personaForm.visualStyle ?? ""} onChange={(v) => setPersonaForm({ ...personaForm, visualStyle: v })} />
-            <div className="mt-2">
-              <ActionButton icon={<Save size={16} />} disabled={!personaForm.name || Boolean(busy)} onClick={() =>
-                runStep("Saving persona", () => (persona ? api.updatePersona(persona.id, personaForm) : api.createPersona(personaForm)), async (saved) => {
-                  const next = await api.personas();
-                  setPersonas(next);
-                  setPersonaId(saved.id);
-                  setShowEditor(false);
-                })
-              }>Save persona</ActionButton>
+          {/* Stage 1: Sources */}
+          {activeStage === "sources" && (
+            <div className="grid gap-6">
+              <SourceIntake
+                project={currentProject}
+                posts={posts}
+                onFileUpload={handleFileUpload}
+                onPasteText={handlePasteText}
+                onImportLibraryPost={handleImportLibraryPost}
+                onSaveDirections={handleSaveDirections}
+                onGenerateTreatments={handleGenerateTreatments}
+                busy={busy}
+              />
+              <ExtractionReview
+                sources={currentProject.sources || []}
+                onUpdateSourceRoles={handleUpdateSourceRoles}
+                onDeleteSource={handleDeleteSource}
+                onVerifyLinks={handleVerifyLinks}
+              />
             </div>
-          </div>
-        ) : null}
+          )}
 
-        <div className="grid gap-2 sm:grid-cols-2">
-          <label className="block">
-            <span className="label">Platform</span>
-            <select className="input" value={platform} onChange={(e) => setPlatform(e.target.value)}>
-              <option value="tiktok">TikTok</option>
-              <option value="reels">Instagram Reels</option>
-              <option value="shorts">YouTube Shorts</option>
-            </select>
-          </label>
-          <label className="block">
-            <span className="label">Target length</span>
-            <select className="input" value={targetSeconds} onChange={(e) => setTargetSeconds(Number(e.target.value))}>
-              {[16, 24, 32, 40, 48].map((s) => <option key={s} value={s}>{s}s</option>)}
-            </select>
-          </label>
+          {/* Stage 2: Treatments */}
+          {activeStage === "treatments" && (
+            <TreatmentComparison
+              treatments={currentProject.treatments || []}
+              selectedTreatmentId={currentProject.selectedTreatmentId}
+              visualBible={currentProject.visualBible}
+              onSelectTreatment={handleSelectTreatment}
+              busy={busy}
+            />
+          )}
+
+          {/* Stage 3: Master Script */}
+          {activeStage === "master-script" && (
+            <ScriptEditor
+              project={currentProject}
+              script={currentProject.masterScript || null}
+              onGenerateScript={handleGenerateMasterScript}
+              onUpdateScript={handleUpdateMasterScript}
+              onRegenerateScene={handleRegenerateScene}
+              onApproveScript={handleApproveMasterScript}
+              onSaveVersion={handleSaveScriptVersion}
+              onRestoreVersion={handleRestoreScriptVersion}
+              busy={busy}
+            />
+          )}
+
+          {/* Stage 4: Adaptations */}
+          {activeStage === "adaptations" && (
+            <AdaptationsView
+              project={currentProject}
+              onGenerateAdaptation={handleGenerateAdaptation}
+              onProceedToShots={async () => setActiveStage("shots")}
+              busy={busy}
+            />
+          )}
+
+          {/* Stage 5: Shots & Storyboards */}
+          {activeStage === "shots" && (
+            <StoryboardGallery
+              project={currentProject}
+              onGenerateShots={handleGenerateShots}
+              onGenerateStoryboards={handleGenerateStoryboards}
+              onProceedToExport={async () => {
+                await handleLoadExport();
+                setActiveStage("export");
+              }}
+              busy={busy}
+            />
+          )}
+
+          {/* Stage 6: Export */}
+          {activeStage === "export" && (
+            <ExportPackageView
+              project={currentProject}
+              exportPkg={exportPkg}
+              onBuildExport={handleLoadExport}
+            />
+          )}
         </div>
-
-        <details className="rounded-md border border-slate-200 bg-white px-3 py-2 text-sm">
-          <summary className="cursor-pointer select-none font-semibold text-slate-700">Model a reference video (optional)</summary>
-          <textarea className="input mt-2 min-h-20" value={referenceText} placeholder="Paste a viral video's transcript or a description of it…" onChange={(e) => setReferenceText(e.target.value)} />
-          <div className="mt-2">
-            <ActionButton icon={<Search size={16} />} disabled={!referenceText.trim() || Boolean(busy)} onClick={() => runStep("Analyzing reference", () => api.videoReference(referenceText), (res) => setReference(res.reference))}>Analyze reference</ActionButton>
-          </div>
-          {reference ? <p className="mt-2 text-xs text-slate-500">Hook: {reference.hookType} · Tone: {reference.tone}</p> : null}
-        </details>
-
-        <div className="border-t border-slate-200 pt-3">
-          <ActionButton icon={<Clapperboard size={16} />} disabled={!sourceText.trim() || Boolean(busy)} onClick={() =>
-            runStep("Writing script", () => api.videoScript({
-              projectId: project?.id,
-              personaId: personaId || undefined,
-              sourceType,
-              sourcePostId: sourcePostId || undefined,
-              sourceText,
-              reference: reference ?? undefined,
-              platform,
-              targetSeconds
-            }), setProject)
-          }>{project?.script ? "Rewrite script" : "Write script"}</ActionButton>
-        </div>
-      </section>
-
-      {project?.script ? (
-        <section className="panel-piece">
-          <div className="flex items-center justify-between gap-2">
-            <h2 className="font-display text-xl font-bold">Script</h2>
-            <button className="btn" onClick={() => copy(scriptText)}><Clipboard size={14} /> Copy script</button>
-          </div>
-          <p className="mt-3 font-bold">{project.script.hook}</p>
-          <ol className="mt-2 grid list-decimal gap-1 pl-5 text-sm text-slate-700">
-            {project.script.beats.map((b, i) => <li key={i}>{b.spokenLine}</li>)}
-          </ol>
-          <p className="mt-2 text-sm text-tide">{project.script.cta}</p>
-          <div className="mt-4">
-            <ActionButton icon={<ListOrdered size={16} />} disabled={Boolean(busy)} onClick={() => runStep("Building shot list", () => api.videoShots(project.id), setProject)}>
-              {project.shots.length ? "Rebuild shot list" : "Build Veo shot list"}
-            </ActionButton>
-          </div>
-        </section>
-      ) : null}
-
-      {project?.script ? (
-        <section className="desk-panel">
-          <div className="flex flex-wrap items-center justify-between gap-2">
-            <div>
-              <h2 className="font-display text-xl font-bold">Cast a persona</h2>
-              <p className="text-sm text-slate-500">Three ways to cast this script so the face itself stops the scroll.</p>
-            </div>
-            <ActionButton icon={<Sparkles size={16} />} disabled={Boolean(busy)} onClick={() => runStep("Casting", () => api.suggestPersonas(project.id), (res) => setCasts(res.suggestions))}>
-              {casts.length ? "Recast" : "Suggest a cast"}
-            </ActionButton>
-          </div>
-          {casts.length ? (
-            <div className="mt-4 grid gap-3 md:grid-cols-3">
-              {casts.map((cast, i) => (
-                <div className="rounded-md border border-slate-200 bg-white p-3" key={i}>
-                  <span className="badge-dusk capitalize">{cast.angle}</span>
-                  <h3 className="mt-2 font-display text-lg font-bold">{cast.name}</h3>
-                  <p className="mt-1 text-xs italic text-slate-500">{cast.rationale}</p>
-                  <dl className="mt-2 grid gap-1 text-xs text-slate-600">
-                    <div><span className="font-semibold">Looks:</span> {cast.appearance}</div>
-                    {cast.wardrobe ? <div><span className="font-semibold">Wears:</span> {cast.wardrobe}</div> : null}
-                    {cast.setting ? <div><span className="font-semibold">Setting:</span> {cast.setting}</div> : null}
-                    {cast.vocalStyle ? <div><span className="font-semibold">Voice:</span> {cast.vocalStyle}</div> : null}
-                  </dl>
-                  <div className="mt-3">
-                    <ActionButton icon={<Save size={16} />} disabled={Boolean(busy)} onClick={() =>
-                      runStep("Saving cast", () => api.createPersona({
-                        name: cast.name,
-                        appearance: cast.appearance ?? "",
-                        wardrobe: cast.wardrobe ?? "",
-                        setting: cast.setting ?? "",
-                        vocalStyle: cast.vocalStyle ?? "",
-                        mannerisms: cast.mannerisms ?? "",
-                        visualStyle: cast.visualStyle ?? ""
-                      }), async (saved) => {
-                        setPersonas(await api.personas());
-                        setPersonaId(saved.id);
-                      })
-                    }>Use this cast</ActionButton>
-                  </div>
-                </div>
-              ))}
-            </div>
-          ) : null}
-          {personaId ? <p className="mt-3 text-xs text-tide">Cast selected — rebuild the shot list to apply it to every shot.</p> : null}
-        </section>
-      ) : null}
-
-      {project?.shots.length ? (
-        <section className="desk-panel">
-          <div className="flex flex-wrap items-center justify-between gap-2">
-            <h2 className="font-display text-xl font-bold">Shots ({project.shots.length}) → Flow</h2>
-            <div className="flex flex-wrap gap-2">
-              <button className="btn" onClick={() => copy(allPrompts)}><Clipboard size={14} /> Copy all prompts</button>
-              <ActionButton icon={<Image size={16} />} disabled={Boolean(busy)} onClick={() => runStep("Rendering anchor", () => api.videoStoryboard(project.id), setProject)}>
-                {project.shots.some((s) => s.keyframeUrl) ? "Refresh reference" : "Generate reference (1 image)"}
-              </ActionButton>
-              <ActionButton icon={<Layers size={16} />} disabled={Boolean(busy)} onClick={() => runStep("Rendering per-shot stills", () => api.videoStoryboard(project.id, true), setProject)}>
-                Per-shot stills ({project.shots.length} images)
-              </ActionButton>
-            </div>
-          </div>
-          <p className="mt-2 text-xs text-slate-500">
-            Flow holds the character from one reference image, so the anchor is generated once per persona and reused by every shot — reruns are free. Per-shot stills are optional and bill one image each.
+      ) : (
+        <div className="rounded-2xl border border-slate-200 bg-white p-16 text-center shadow-2xs">
+          <Clapperboard size={48} className="mx-auto text-indigo-600 mb-3" />
+          <h3 className="font-display text-xl font-bold text-slate-800">No Active Project</h3>
+          <p className="mt-1 text-xs text-slate-500 max-w-sm mx-auto">
+            Open the project library to select an existing workspace or create a new document video project.
           </p>
-          <div className="mt-4 grid gap-3">
-            {project.shots.map((shot, i) => (
-              <div className="rounded-md border border-slate-200 bg-white p-3" key={i}>
-                <div className="flex gap-3">
-                  {shot.keyframeUrl ? <img className="h-28 w-20 flex-none rounded-md object-cover" src={shot.keyframeUrl} alt={`Shot ${i + 1}`} /> : null}
-                  <div className="min-w-0 flex-1">
-                    <div className="flex items-center justify-between gap-2">
-                      <span className="text-xs font-bold uppercase text-slate-500">Shot {i + 1} · ~{shot.durationSec}s</span>
-                      <button className="btn" onClick={() => copy(shot.visualPrompt)}><Clipboard size={14} /> Copy</button>
-                    </div>
-                    <p className="mt-1 text-sm text-slate-700">{shot.visualPrompt}</p>
-                    <p className="mt-1 text-xs text-dusk">🗣 {shot.spokenLine}</p>
-                    {shot.audioCue ? <p className="text-xs text-slate-400">🔊 {shot.audioCue}</p> : null}
-                    {shot.onScreenText ? <p className="text-xs text-slate-400">📝 {shot.onScreenText}</p> : null}
-                  </div>
+          <button
+            className="mt-4 rounded-xl bg-indigo-600 px-5 py-2.5 text-xs font-bold text-white hover:bg-indigo-700 shadow-sm transition-all"
+            onClick={() => setShowLibrary(true)}
+          >
+            Open Project Library
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// Cadence: the queue of pieces that cleared the gate, and the writer's own
+// recurring failure modes accumulated over time. The grader becomes a training
+// loop — you find out where your writing actually loses points.
+function PublishQueuePanel({ posts }: { posts: Post[] }) {
+  const [profile, setProfile] = useState<{
+    topDefects: Array<{ code: string | null; mechanism: string; count: number }>;
+    totalFindings: number;
+    firstPassClearRate: number;
+    runs: number;
+    readyScore: number;
+  } | null>(null);
+
+  useEffect(() => {
+    void api.gateProfile().then(setProfile).catch(() => undefined);
+  }, [posts.length]);
+
+  const queue = posts.filter((post) => post.status === "ready");
+  if (!profile && queue.length === 0) return null;
+
+  return (
+    <div className="mt-4 border-t border-slate-200 pt-4">
+      <p className="text-xs font-bold uppercase tracking-wide text-slate-500">Ready to post</p>
+      {queue.length === 0 ? (
+        <p className="mt-1 text-xs text-slate-500">Nothing has cleared the gate yet.</p>
+      ) : (
+        <ul className="mt-2 grid gap-1">
+          {queue.slice(0, 5).map((post) => (
+            <li className="flex items-center justify-between gap-2 text-sm" key={post.id}>
+              <span className="truncate">{post.title}</span>
+              {post.gateScore ? <span className="badge">{post.gateScore}/7</span> : null}
+            </li>
+          ))}
+        </ul>
+      )}
+
+      {profile && profile.runs > 0 ? (
+        <div className="mt-4">
+          <p className="text-xs font-bold uppercase tracking-wide text-slate-500">Your recurring failure modes</p>
+          <p className="mt-1 text-xs text-slate-500">
+            {(profile.firstPassClearRate * 100).toFixed(0)}% of drafts clear on the first run · {profile.runs} gate runs
+          </p>
+          <ul className="mt-2 grid gap-1 text-sm text-slate-700">
+            {profile.topDefects.slice(0, 5).map((defect, i) => (
+              <li key={i}>
+                <span className="badge mr-2">{defect.code ?? "—"}</span>
+                {defect.mechanism} <span className="text-slate-400">×{defect.count}</span>
+              </li>
+            ))}
+          </ul>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+// The publish gate: an adjudicated verdict with a named reason, every located
+// defect with its mechanism and the direction a fix should take, and one
+// credited strength. Directions only — the panel never drafts the sentence.
+function PublishGatePanel({
+  gate,
+  rejected,
+  ready,
+  busy,
+  onAdjudicate,
+  onRevise
+}: {
+  gate: { report: AdjudicationReport; verdict: PublishVerdict } | null;
+  rejected: Array<{ pattern: string; evidence: string }>;
+  ready: boolean;
+  busy: string;
+  onAdjudicate: () => void;
+  onRevise: () => void;
+}) {
+  const verdict = gate?.verdict;
+  const report = gate?.report;
+  return (
+    <div className="panel-instrument">
+      <h3 className="flex items-center gap-2 font-bold"><Shield size={16} /> Is it postable?</h3>
+      <p className="mt-1 text-sm text-slate-500">
+        Every unit is scanned, the suspects are adjudicated through six gates, and the piece lands on a 1&ndash;7 ladder with a stated reason.
+      </p>
+      <div className="mt-3 flex flex-wrap gap-2">
+        <ActionButton icon={<Shield size={16} />} disabled={!ready || Boolean(busy)} onClick={onAdjudicate}>Run the gate</ActionButton>
+        <ActionButton icon={<Wand2 size={16} />} disabled={!report?.findings.length || Boolean(busy)} onClick={onRevise}>
+          Fix the flagged spots
+        </ActionButton>
+      </div>
+
+      {verdict ? (
+        <div className={`mt-4 rounded-md border p-3 ${verdict.ready ? "border-tide/30 bg-tide/5" : "border-ember/30 bg-ember-wash"}`}>
+          <p className="font-display text-lg font-bold">
+            {verdict.score}/7 {verdict.ready ? "· ready to post" : "· blocked"}
+            <span className="ml-2 text-xs font-normal text-slate-500">sentence hygiene {verdict.hygiene}/50</span>
+          </p>
+          <p className="mt-1 text-sm text-slate-700">{verdict.reason}</p>
+          {verdict.synthesis ? (
+            <p className="mt-2 text-xs text-slate-500">
+              claim {verdict.synthesis.claim ? "✓" : "✗"} · proof {verdict.synthesis.proof ? "✓" : "✗"} · compression{" "}
+              {verdict.synthesis.compression ? "✓" : "✗"}
+            </p>
+          ) : null}
+        </div>
+      ) : null}
+
+      {rejected.length ? (
+        <div className="mt-3 rounded-md border border-ember/40 bg-ember-wash p-3 text-sm">
+          <p className="font-bold">Revision rejected — it swapped formal slop for casual slop.</p>
+          <ul className="mt-1 text-xs text-slate-600">
+            {rejected.map((hit, i) => <li key={i}>• {hit.pattern}: &ldquo;{hit.evidence}&rdquo;</li>)}
+          </ul>
+        </div>
+      ) : null}
+
+      {report ? (
+        <div className="mt-3">
+          <p className="text-xs text-slate-500">
+            {report.findings.length} located defect{report.findings.length === 1 ? "" : "s"} across {report.unitsScanned} units
+            {" · "}{(report.flaggedShare * 100).toFixed(0)}% flagged{report.provider === "openrouter" ? " · adjudicated" : " · scanner only"}
+          </p>
+          {report.baseRateNote ? <p className="mt-1 text-xs text-dusk">{report.baseRateNote}</p> : null}
+          <div className="mt-2 grid gap-2">
+            {report.findings.map((finding, i) => (
+              <div className="rounded-md border border-slate-200 p-2" key={i}>
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="badge">{finding.code ?? `bucket ${finding.bucket ?? "?"}`}</span>
+                  <span className="text-xs font-bold uppercase text-slate-500">{finding.location}</span>
                 </div>
+                <p className="mt-1 text-sm italic text-slate-700">&ldquo;{finding.quote}&rdquo;</p>
+                <p className="mt-1 text-xs text-slate-600">{finding.mechanism}{finding.effect ? ` — ${finding.effect}` : ""}</p>
+                {finding.direction ? <p className="mt-1 text-xs text-tide">→ {finding.direction}</p> : null}
               </div>
             ))}
           </div>
-        </section>
+          {report.strength ? (
+            <div className="mt-3 rounded-md border border-tide/30 bg-tide/5 p-2">
+              <p className="text-xs font-bold uppercase text-tide">Strength · {report.strength.location}</p>
+              <p className="mt-1 text-sm italic text-slate-700">&ldquo;{report.strength.quote}&rdquo;</p>
+              <p className="mt-1 text-xs text-slate-600">{report.strength.why}</p>
+            </div>
+          ) : null}
+        </div>
       ) : null}
     </div>
   );

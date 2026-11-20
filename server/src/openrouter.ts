@@ -33,7 +33,12 @@ const modelEnv: Partial<Record<PromptStage, string>> = {
   "study-skill": "MODEL_STUDY_SKILL",
   "video-reference": "MODEL_VIDEO_REFERENCE",
   "video-script": "MODEL_VIDEO_SCRIPT",
-  "video-shots": "MODEL_VIDEO_SHOTS"
+  "video-shots": "MODEL_VIDEO_SHOTS",
+  "video-ingest": "MODEL_VIDEO_INGEST",
+  "video-treatment": "MODEL_VIDEO_TREATMENT",
+  "video-storyboard": "MODEL_VIDEO_STORYBOARD",
+  "video-adaptation": "MODEL_VIDEO_ADAPTATION",
+  adjudicate: "MODEL_ADJUDICATE"
 };
 
 type ModelProfile = "cost-first" | "balanced" | "premium";
@@ -59,6 +64,11 @@ const modelProfiles: Record<ModelProfile, Partial<Record<PromptStage, string>>> 
     "video-reference": "google/gemini-3.1-flash-lite",
     "video-script": "z-ai/glm-5.2",
     "video-shots": "google/gemini-3.1-flash-lite",
+    "video-ingest": "google/gemini-3.1-flash-lite",
+    "video-treatment": "z-ai/glm-5.2",
+    "video-storyboard": "google/gemini-3.1-flash-lite",
+    "video-adaptation": "google/gemini-3.1-flash-lite",
+    adjudicate: "google/gemini-3.1-flash-lite",
     image: "google/gemini-3.1-flash-lite-image"
   },
   balanced: {
@@ -81,6 +91,11 @@ const modelProfiles: Record<ModelProfile, Partial<Record<PromptStage, string>>> 
     "video-reference": "google/gemini-3.1-flash-lite",
     "video-script": "anthropic/claude-sonnet-4.6",
     "video-shots": "google/gemini-3.1-flash-lite",
+    "video-ingest": "google/gemini-3.1-flash-lite",
+    "video-treatment": "anthropic/claude-sonnet-4.6",
+    "video-storyboard": "google/gemini-3.1-flash-lite",
+    "video-adaptation": "anthropic/claude-sonnet-4.6",
+    adjudicate: "z-ai/glm-5.2",
     image: "google/gemini-3.1-flash-image"
   },
   premium: {
@@ -103,6 +118,11 @@ const modelProfiles: Record<ModelProfile, Partial<Record<PromptStage, string>>> 
     "video-reference": "google/gemini-3.1-flash-lite",
     "video-script": "anthropic/claude-sonnet-4.6",
     "video-shots": "z-ai/glm-5.2",
+    "video-ingest": "google/gemini-3.1-flash-lite",
+    "video-treatment": "anthropic/claude-sonnet-4.6",
+    "video-storyboard": "google/gemini-3.1-flash-lite",
+    "video-adaptation": "anthropic/claude-sonnet-4.6",
+    adjudicate: "anthropic/claude-sonnet-4.6",
     image: "google/gemini-3-pro-image"
   }
 };

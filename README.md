@@ -63,6 +63,7 @@ Co-Create is a TypeScript monorepo (React/Vite client, Node/Express server, shar
   - **The Grid** — a second content engine that turns real signals into serialized fiction (signals → synthesis → human gate → story + critic loop → publish), with continuity memory.
   - **Experiments** — swarm-generate N cheap draft variations and keep the winner; A/B prompt versions.
   - **Knowledge Graph** — turn a corpus into a prerequisite concept DAG with reading order and gap analysis.
+  - **Video Studio V2** — turn DOCX, PDF, Markdown, pasted text, and optional narrative/visual direction into three treatments, an approved master script, platform adaptations, grounded shot prompts, and selectively generated private storyboard frames.
   - **Prompt Studio, Corpus, Import, History** — versioned prompts, memory classification, ingestion, and cost telemetry.
 - **Shows / content lines** — each Show bundles a voice + workflow + memory.
 - **Hybrid AI** — OpenRouter when configured, deterministic mock outputs otherwise. Cost telemetry on every call.
@@ -75,5 +76,12 @@ npm run test       # server tests
 npm run typecheck
 npm run build
 ```
+
+### Video Studio privacy model
+
+- Projects default to private. Original upload files are deleted after extraction; extracted text and downscaled evidence previews remain owner-scoped until their source or project is deleted.
+- External AI processing is disabled per project until the user explicitly consents. Link verification is a separate opt-in network action.
+- Production exports omit raw source text, evidence-image bytes, and authenticated private asset URLs.
+- The studio stops at scripts, storyboards, and generation prompts; it does not render or publish finished videos.
 
 </details>

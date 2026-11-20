@@ -88,6 +88,10 @@ async function migrate(db: AppDatabase) {
       source_url text,
       cover_image_url text,
       seo text,
+      gate_score integer,
+      gate_reason text,
+      gate_override text,
+      gated_at text,
       created_at text NOT NULL,
       updated_at text NOT NULL,
       published_at text
@@ -250,6 +254,33 @@ async function migrate(db: AppDatabase) {
     );
 
     -- Additive columns for tables that predate them in existing deployments.
+    CREATE TABLE IF NOT EXISTS slop_findings (
+      id text PRIMARY KEY,
+      owner_id text NOT NULL DEFAULT 'owner-default',
+      post_id text,
+      bucket integer,
+      code text,
+      mechanism text NOT NULL,
+      location text NOT NULL,
+      quote text NOT NULL,
+      created_at text NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS slop_gate_runs (
+      id text PRIMARY KEY,
+      owner_id text NOT NULL DEFAULT 'owner-default',
+      post_id text,
+      score integer NOT NULL,
+      ready integer NOT NULL,
+      findings_count integer NOT NULL,
+      run_index integer NOT NULL,
+      created_at text NOT NULL
+    );
+
+    ALTER TABLE posts ADD COLUMN IF NOT EXISTS gate_score integer;
+    ALTER TABLE posts ADD COLUMN IF NOT EXISTS gate_reason text;
+    ALTER TABLE posts ADD COLUMN IF NOT EXISTS gate_override text;
+    ALTER TABLE posts ADD COLUMN IF NOT EXISTS gated_at text;
     ALTER TABLE generation_records ADD COLUMN IF NOT EXISTS latency_ms integer;
     ALTER TABLE generation_records ADD COLUMN IF NOT EXISTS fallback_model text;
 
@@ -426,7 +457,112 @@ async function migrate(db: AppDatabase) {
       shots text,
       cost double precision,
       created_at text NOT NULL,
+      updated_at text NOT NULL,
+      title text NOT NULL DEFAULT 'Untitled Video Project',
+      format text NOT NULL DEFAULT 'documentary',
+      audience text NOT NULL DEFAULT '',
+      objective text NOT NULL DEFAULT '',
+      privacy_state text NOT NULL DEFAULT 'private',
+      external_ai_consent integer NOT NULL DEFAULT 0,
+      primary_output text NOT NULL DEFAULT '8-12 min',
+      selected_platforms text NOT NULL DEFAULT '["youtube","tiktok","reels","shorts"]',
+      creative_brief text,
+      treatments text,
+      selected_treatment_id text,
+      visual_bible text,
+      approval_state text NOT NULL DEFAULT '{"treatmentApproved":false,"scriptApproved":false}',
+      current_stage text NOT NULL DEFAULT 'sources',
+      master_script text,
+      script_versions text NOT NULL DEFAULT '[]',
+      adaptations text NOT NULL DEFAULT '[]',
+      storyboards text NOT NULL DEFAULT '[]'
+    );
+
+    ALTER TABLE video_projects ADD COLUMN IF NOT EXISTS title text NOT NULL DEFAULT 'Untitled Video Project';
+    ALTER TABLE video_projects ADD COLUMN IF NOT EXISTS format text NOT NULL DEFAULT 'documentary';
+    ALTER TABLE video_projects ADD COLUMN IF NOT EXISTS audience text NOT NULL DEFAULT '';
+    ALTER TABLE video_projects ADD COLUMN IF NOT EXISTS objective text NOT NULL DEFAULT '';
+    ALTER TABLE video_projects ADD COLUMN IF NOT EXISTS privacy_state text NOT NULL DEFAULT 'private';
+    ALTER TABLE video_projects ADD COLUMN IF NOT EXISTS external_ai_consent integer NOT NULL DEFAULT 0;
+    ALTER TABLE video_projects ADD COLUMN IF NOT EXISTS primary_output text NOT NULL DEFAULT '8-12 min';
+    ALTER TABLE video_projects ADD COLUMN IF NOT EXISTS selected_platforms text NOT NULL DEFAULT '["youtube","tiktok","reels","shorts"]';
+    ALTER TABLE video_projects ADD COLUMN IF NOT EXISTS creative_brief text;
+    ALTER TABLE video_projects ADD COLUMN IF NOT EXISTS treatments text;
+    ALTER TABLE video_projects ADD COLUMN IF NOT EXISTS selected_treatment_id text;
+    ALTER TABLE video_projects ADD COLUMN IF NOT EXISTS visual_bible text;
+    ALTER TABLE video_projects ADD COLUMN IF NOT EXISTS approval_state text NOT NULL DEFAULT '{"treatmentApproved":false,"scriptApproved":false}';
+    ALTER TABLE video_projects ADD COLUMN IF NOT EXISTS current_stage text NOT NULL DEFAULT 'sources';
+    ALTER TABLE video_projects ADD COLUMN IF NOT EXISTS master_script text;
+    ALTER TABLE video_projects ADD COLUMN IF NOT EXISTS script_versions text NOT NULL DEFAULT '[]';
+    ALTER TABLE video_projects ADD COLUMN IF NOT EXISTS adaptations text NOT NULL DEFAULT '[]';
+    ALTER TABLE video_projects ADD COLUMN IF NOT EXISTS storyboards text NOT NULL DEFAULT '[]';
+
+    CREATE TABLE IF NOT EXISTS video_sources (
+      id text PRIMARY KEY,
+      project_id text NOT NULL,
+      owner_id text NOT NULL DEFAULT 'owner-default',
+      filename text NOT NULL,
+      mime_type text NOT NULL,
+      size_bytes integer NOT NULL,
+      checksum text NOT NULL,
+      roles text NOT NULL DEFAULT '["evidence"]',
+      extraction_status text NOT NULL DEFAULT 'pending',
+      warnings text NOT NULL DEFAULT '[]',
+      extracted_text text NOT NULL DEFAULT '',
+      extracted_images text NOT NULL DEFAULT '[]',
+      extracted_links text NOT NULL DEFAULT '[]',
+      locators text NOT NULL DEFAULT '[]',
+      created_at text NOT NULL,
       updated_at text NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS video_source_chunks (
+      id text PRIMARY KEY,
+      source_id text NOT NULL,
+      project_id text NOT NULL,
+      owner_id text NOT NULL DEFAULT 'owner-default',
+      chunk_index integer NOT NULL,
+      chunk_text text NOT NULL,
+      locator_type text NOT NULL,
+      locator_value text NOT NULL,
+      created_at text NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS video_script_versions (
+      id text PRIMARY KEY,
+      project_id text NOT NULL,
+      owner_id text NOT NULL DEFAULT 'owner-default',
+      version_number integer NOT NULL,
+      script_data text NOT NULL,
+      approved integer NOT NULL DEFAULT 0,
+      created_at text NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS video_storyboards (
+      id text PRIMARY KEY,
+      project_id text NOT NULL,
+      owner_id text NOT NULL DEFAULT 'owner-default',
+      scene_id text NOT NULL,
+      image_data text NOT NULL,
+      mime_type text NOT NULL DEFAULT 'image/png',
+      visual_prompt text NOT NULL DEFAULT '',
+      created_at text NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS video_evidence_images (
+      id text PRIMARY KEY,
+      project_id text NOT NULL,
+      owner_id text NOT NULL DEFAULT 'owner-default',
+      source_id text NOT NULL,
+      name text NOT NULL,
+      mime_type text NOT NULL,
+      width integer,
+      height integer,
+      ocr_text text,
+      ocr_confidence real,
+      locator text,
+      image_data text NOT NULL,
+      created_at text NOT NULL
     );
 
     CREATE TABLE IF NOT EXISTS territories (

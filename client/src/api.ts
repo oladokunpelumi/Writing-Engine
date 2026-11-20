@@ -9,6 +9,8 @@ import type {
   DesirePassResponse,
   DesireReport,
   ScannabilityReport,
+  AdjudicationReport,
+  PublishVerdict,
   ScannabilityPassResponse,
   Experiment,
   ExperimentResult,
@@ -140,6 +142,81 @@ export const api = {
     request<VideoPersona>(`/api/personas/${id}`, { method: "PUT", headers: jsonHeaders, body: JSON.stringify(persona) }),
   deletePersona: (id: string) => request<{ deleted: boolean }>(`/api/personas/${id}`, { method: "DELETE" }),
   videoProjects: () => request<VideoProject[]>("/api/video/projects"),
+  getVideoProject: (id: string) => request<VideoProject>(`/api/video/projects/${id}`),
+  createVideoProject: (input: Partial<VideoProject>) =>
+    request<VideoProject>("/api/video/projects", { method: "POST", headers: jsonHeaders, body: JSON.stringify(input) }),
+  updateVideoProject: (id: string, input: Partial<VideoProject>) =>
+    request<VideoProject>(`/api/video/projects/${id}`, { method: "PATCH", headers: jsonHeaders, body: JSON.stringify(input) }),
+  duplicateVideoProject: (id: string) =>
+    request<VideoProject>(`/api/video/projects/${id}/duplicate`, { method: "POST" }),
+  deleteVideoProject: (id: string) =>
+    request<{ deleted: boolean }>(`/api/video/projects/${id}`, { method: "DELETE" }),
+  uploadVideoSources: (projectId: string, formData: FormData) =>
+    request<{ sources: any[]; project: VideoProject }>(`/api/video/projects/${projectId}/sources/upload`, {
+      method: "POST",
+      body: formData
+    }),
+  addVideoTextSource: (projectId: string, text: string, title?: string, roles?: string[]) =>
+    request<{ source: any; project: VideoProject }>(`/api/video/projects/${projectId}/sources/text`, {
+      method: "POST",
+      headers: jsonHeaders,
+      body: JSON.stringify({ text, title, roles })
+    }),
+  updateVideoSourceRoles: (sourceId: string, roles: string[]) =>
+    request<any>(`/api/video/sources/${sourceId}`, { method: "PATCH", headers: jsonHeaders, body: JSON.stringify({ roles }) }),
+  deleteVideoSource: (sourceId: string) =>
+    request<{ deleted: boolean }>(`/api/video/sources/${sourceId}`, { method: "DELETE" }),
+  verifyVideoLinks: (projectId: string) =>
+    request<{ sources: any[] }>(`/api/video/projects/${projectId}/verify-links`, { method: "POST" }),
+  generateVideoTreatments: (projectId: string) =>
+    request<VideoProject>(`/api/video/projects/${projectId}/treatments/generate`, { method: "POST" }),
+  selectVideoTreatment: (projectId: string, treatmentId: string) =>
+    request<VideoProject>(`/api/video/projects/${projectId}/treatments/select`, {
+      method: "POST",
+      headers: jsonHeaders,
+      body: JSON.stringify({ treatmentId })
+    }),
+  generateVideoMasterScript: (projectId: string) =>
+    request<VideoProject>(`/api/video/projects/${projectId}/script/generate`, { method: "POST" }),
+  updateVideoMasterScript: (projectId: string, scenes: any[]) =>
+    request<VideoProject>(`/api/video/projects/${projectId}/script`, {
+      method: "PATCH",
+      headers: jsonHeaders,
+      body: JSON.stringify({ scenes })
+    }),
+  regenerateVideoScene: (projectId: string, sceneIndex: number) =>
+    request<VideoProject>(`/api/video/projects/${projectId}/script/scene-regenerate`, {
+      method: "POST",
+      headers: jsonHeaders,
+      body: JSON.stringify({ sceneIndex })
+    }),
+  approveVideoMasterScript: (projectId: string) =>
+    request<VideoProject>(`/api/video/projects/${projectId}/script/approve`, { method: "POST" }),
+  saveVideoScriptVersion: (projectId: string) =>
+    request<VideoProject>(`/api/video/projects/${projectId}/script/versions`, { method: "POST" }),
+  restoreVideoScriptVersion: (projectId: string, versionId: string) =>
+    request<VideoProject>(`/api/video/projects/${projectId}/script/versions/${versionId}/restore`, { method: "POST" }),
+  generateVideoAdaptation: (projectId: string, platform: string, targetSeconds: number) =>
+    request<VideoProject>(`/api/video/projects/${projectId}/adaptations/generate`, {
+      method: "POST",
+      headers: jsonHeaders,
+      body: JSON.stringify({ platform, targetSeconds })
+    }),
+  generateVideoShotsV2: (projectId: string, scriptKind: "master" | "adaptation" = "master", scriptId?: string) =>
+    request<VideoProject>(`/api/video/projects/${projectId}/shots/generate`, {
+      method: "POST",
+      headers: jsonHeaders,
+      body: JSON.stringify({ scriptKind, scriptId })
+    }),
+  generateVideoStoryboardV2: (projectId: string, shotIndexes?: number[]) =>
+    request<VideoProject>(`/api/video/projects/${projectId}/storyboard/generate`, {
+      method: "POST",
+      headers: jsonHeaders,
+      body: JSON.stringify({ shotIndexes })
+    }),
+  exportVideoPackage: (projectId: string) =>
+    request<{ markdown: string; json: VideoProject }>(`/api/video/projects/${projectId}/export`),
+
   videoReference: (transcript: string) =>
     request<{ reference: ReferenceBlueprint }>("/api/video/reference", { method: "POST", headers: jsonHeaders, body: JSON.stringify({ transcript }) }),
   videoScript: (input: {
@@ -156,8 +233,6 @@ export const api = {
     request<{ suggestions: PersonaSuggestion[] }>("/api/video/personas/suggest", { method: "POST", headers: jsonHeaders, body: JSON.stringify({ projectId }) }),
   videoShots: (projectId: string) =>
     request<VideoProject>("/api/video/shots", { method: "POST", headers: jsonHeaders, body: JSON.stringify({ projectId }) }),
-  // perShot=false (default) reuses ONE cached persona anchor as the Flow ingredient
-  // for every shot; perShot=true renders an individual still per shot (costs N images).
   videoStoryboard: (projectId: string, perShot = false) =>
     request<VideoProject & { anchorImageUrl?: string; imagesGenerated?: number }>("/api/video/storyboard", {
       method: "POST",
@@ -240,6 +315,35 @@ export const api = {
       headers: jsonHeaders,
       body: JSON.stringify({ text, draftPostId })
     }),
+  gateAdjudicate: (text: string, opts: { format?: string; postId?: string } = {}) =>
+    request<{ report: AdjudicationReport; verdict: PublishVerdict }>("/api/gate/adjudicate", {
+      method: "POST",
+      headers: jsonHeaders,
+      body: JSON.stringify({ text, ...opts })
+    }),
+  gateRevise: (text: string, opts: { format?: string; postId?: string } = {}) =>
+    request<{
+      text: string;
+      changed: boolean;
+      rejected?: Array<{ pattern: string; evidence: string }>;
+      before: { report: AdjudicationReport; verdict: PublishVerdict };
+      after: { report: AdjudicationReport; verdict: PublishVerdict };
+    }>("/api/gate/revise", { method: "POST", headers: jsonHeaders, body: JSON.stringify({ text, ...opts }) }),
+  gateReady: (postId: string, override?: string) =>
+    request<{ post: Post; verdict: PublishVerdict; overridden: boolean }>(`/api/gate/ready/${postId}`, {
+      method: "POST",
+      headers: jsonHeaders,
+      body: JSON.stringify({ override })
+    }),
+  gateQueue: () => request<Post[]>("/api/gate/queue"),
+  gateProfile: () =>
+    request<{
+      topDefects: Array<{ code: string | null; mechanism: string; count: number }>;
+      totalFindings: number;
+      firstPassClearRate: number;
+      runs: number;
+      readyScore: number;
+    }>("/api/gate/profile"),
   scannabilityScore: (text: string) =>
     request<ScannabilityReport>("/api/scannability/score", { method: "POST", headers: jsonHeaders, body: JSON.stringify({ text }) }),
   scannabilityPass: (text: string, draftPostId?: string) =>

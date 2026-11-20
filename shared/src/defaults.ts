@@ -311,6 +311,14 @@ export const DEFAULT_PROMPT_TEMPLATES: PromptTemplateInput[] = [
     notes: "UGC Video Studio (BUILD 2)",
     body:
       "Turn the script into a shot list for Google Flow / Veo 3. Return ONLY strict JSON: { shots: [{ index, spokenLine, visualPrompt, audioCue, onScreenText, durationSec }] }. One shot per beat, ~8s each. Each visualPrompt uses Veo anatomy (subject·action·setting·camera·lighting·mood·style·audio) and describes the persona IDENTICALLY every shot for consistency; put the spoken line in the audio as quoted dialogue."
+  },
+  {
+    stage: "adjudicate",
+    name: "Adjudicate: slop gates",
+    description: "Re-examines scanner candidates through the six gates and names the mechanism behind each.",
+    notes: "Adjudicated quality gate — directions only, never drafted copy",
+    body:
+      'Adjudicate each candidate through the six gates in order, stopping at the first that decides. Return ONLY strict JSON: an array of { location, verdict: "slop"|"not-slop", bucket, code, mechanism, effect, direction, gate }. Judge each phrase against its stated position — fragments are correct in titles, labels, and captions. A genuine coin-flip resolves to not-slop. Give the direction a fix should take; never draft the replacement sentence.'
   }
 ];
 

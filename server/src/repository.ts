@@ -40,10 +40,22 @@ import type {
   WorkflowRecipePreview,
   UsageLimit,
   UsageStatus,
+  AdjudicatedFinding,
   VideoPersona,
   VideoPersonaInput,
   VideoProject,
-  VideoShot
+  VideoShot,
+  VideoSource,
+  VideoFormat,
+  VideoSourceRole,
+  VideoEvidence,
+  CreativeBrief,
+  VideoTreatment,
+  ProductionScene,
+  ProductionScript,
+  VideoAdaptation,
+  VideoProjectStage,
+  VisualBible
 } from "../../shared/src";
 import { DEFAULT_PROMPT_TEMPLATES, DEFAULT_VOICE_PROFILE, DEFAULT_WORKFLOW_RECIPES, STARTER_VOICE_PROFILE } from "../../shared/src";
 import { GRID_PROMPT_TEMPLATES, GRID_RECIPE, GRID_VOICE_PROFILE } from "./gridContent";
@@ -90,7 +102,9 @@ const OWNER_TABLES = [
   "activation_events",
   "partner_feedback",
   "video_personas",
-  "video_projects"
+  "video_projects",
+  "slop_findings",
+  "slop_gate_runs"
 ];
 
 export class Repository {
@@ -623,6 +637,111 @@ export class Repository {
     return { id, createdAt };
   }
 
+  // ---- Adjudicated quality gate: verdicts, findings, defect profile ----
+
+  /** Record the gate verdict on the post and log the run for the profile. */
+  async recordGateRun(input: {
+    postId?: string;
+    score: number;
+    ready: boolean;
+    reason: string;
+    findingsCount: number;
+    override?: string;
+  }): Promise<{ runIndex: number }> {
+    const ts = now();
+    let runIndex = 1;
+    if (input.postId) {
+      const prior = await this.db
+        .prepare("SELECT COUNT(*) AS c FROM slop_gate_runs WHERE owner_id = ? AND post_id = ?")
+        .get(this.owner, input.postId);
+      runIndex = Number(prior?.c ?? 0) + 1;
+      await this.db
+        .prepare("UPDATE posts SET gate_score = ?, gate_reason = ?, gate_override = ?, gated_at = ?, updated_at = ? WHERE id = ? AND owner_id = ?")
+        .run(input.score, input.reason, input.override ?? null, ts, ts, input.postId, this.owner);
+    }
+    await this.db
+      .prepare(
+        `INSERT INTO slop_gate_runs (id, owner_id, post_id, score, ready, findings_count, run_index, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+      )
+      .run(randomUUID(), this.owner, input.postId ?? null, input.score, input.ready ? 1 : 0, input.findingsCount, runIndex, ts);
+    return { runIndex };
+  }
+
+  /** Persist located findings so the writer's recurring failure modes accumulate. */
+  async recordFindings(postId: string | undefined, findings: AdjudicatedFinding[]): Promise<void> {
+    const ts = now();
+    for (const finding of findings) {
+      await this.db
+        .prepare(
+          `INSERT INTO slop_findings (id, owner_id, post_id, bucket, code, mechanism, location, quote, created_at)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+        )
+        .run(
+          randomUUID(),
+          this.owner,
+          postId ?? null,
+          finding.bucket ?? null,
+          finding.code ?? null,
+          finding.mechanism,
+          finding.location,
+          finding.quote.slice(0, 300),
+          ts
+        );
+    }
+  }
+
+  /** Move a post into (or out of) the ready-to-post queue. */
+  async setPostStatus(id: string, status: Post["status"]): Promise<Post | undefined> {
+    await this.db
+      .prepare("UPDATE posts SET status = ?, updated_at = ? WHERE id = ? AND owner_id = ?")
+      .run(status, now(), id, this.owner);
+    return this.getPost(id);
+  }
+
+  /** The queue: pieces that cleared the gate, oldest first. */
+  async readyQueue(): Promise<Post[]> {
+    return (
+      await this.db
+        .prepare("SELECT * FROM posts WHERE owner_id = ? AND status = 'ready' ORDER BY gated_at ASC NULLS LAST, created_at ASC")
+        .all(this.owner)
+    ).map(rowToPost);
+  }
+
+  /**
+   * The writer's recurring failure modes, plus how often a draft clears the gate
+   * on its first run. Turns the grader into a training loop.
+   */
+  async defectProfile(): Promise<{
+    topDefects: Array<{ code: string | null; mechanism: string; count: number }>;
+    totalFindings: number;
+    firstPassClearRate: number;
+    runs: number;
+  }> {
+    const rows = await this.db
+      .prepare(
+        `SELECT code, mechanism, COUNT(*) AS c FROM slop_findings WHERE owner_id = ?
+         GROUP BY code, mechanism ORDER BY c DESC LIMIT 8`
+      )
+      .all(this.owner);
+    const total = await this.db.prepare("SELECT COUNT(*) AS c FROM slop_findings WHERE owner_id = ?").get(this.owner);
+    const firstRuns = await this.db
+      .prepare("SELECT ready FROM slop_gate_runs WHERE owner_id = ? AND run_index = 1")
+      .all(this.owner);
+    const cleared = firstRuns.filter((row: Record<string, unknown>) => Number(row.ready) === 1).length;
+    const allRuns = await this.db.prepare("SELECT COUNT(*) AS c FROM slop_gate_runs WHERE owner_id = ?").get(this.owner);
+    return {
+      topDefects: rows.map((row: Record<string, unknown>) => ({
+        code: row.code ? String(row.code) : null,
+        mechanism: String(row.mechanism),
+        count: Number(row.c)
+      })),
+      totalFindings: Number(total?.c ?? 0),
+      firstPassClearRate: firstRuns.length === 0 ? 0 : cleared / firstRuns.length,
+      runs: Number(allRuns?.c ?? 0)
+    };
+  }
+
   // ---- Video Studio: personas (reusable AI-influencer identities) ----
   private rowToPersona(row: Record<string, unknown>): VideoPersona {
     const profile = parse<Omit<VideoPersona, "id" | "name" | "createdAt" | "updatedAt">>(String(row.profile), {
@@ -703,43 +822,123 @@ export class Repository {
     return rows.length > 0;
   }
 
-  // ---- Video Studio: projects (script + shots + keyframes for one video) ----
-  private rowToVideoProject(row: Record<string, unknown>): VideoProject {
+  // ---- Video Studio: projects (V2 workspace) ----
+  private rowToVideoProject(row: Record<string, unknown>, sources: VideoSource[] = []): VideoProject {
+    const treatments = row.treatments ? parse<VideoTreatment[]>(String(row.treatments), []) : [];
+    const selectedTreatmentId = row.selected_treatment_id ? String(row.selected_treatment_id) : undefined;
+    const selectedTreatment = selectedTreatmentId ? treatments.find((t) => t.id === selectedTreatmentId) : undefined;
+
     return {
       id: String(row.id),
+      ownerId: String(row.owner_id ?? this.owner),
+      title: String(row.title ?? "Untitled Video Project"),
+      format: (row.format ? String(row.format) : "documentary") as VideoFormat,
+      audience: String(row.audience ?? ""),
+      objective: String(row.objective ?? ""),
+      privacyState: row.privacy_state === "public" ? "public" : "private",
+      externalAiConsent: Number(row.external_ai_consent ?? 0) === 1,
+      primaryOutput: (row.primary_output ? String(row.primary_output) : "8-12 min") as any,
+      selectedPlatforms: row.selected_platforms
+        ? parse<string[]>(String(row.selected_platforms), ["youtube", "tiktok", "reels", "shorts"])
+        : ["youtube", "tiktok", "reels", "shorts"],
+      creativeBrief: row.creative_brief ? parse<CreativeBrief>(String(row.creative_brief), undefined as never) : undefined,
+      sources,
+      treatments,
+      selectedTreatmentId,
+      selectedTreatment,
+      visualBible: row.visual_bible ? parse<VisualBible>(String(row.visual_bible), undefined as never) : undefined,
+      approvalState: row.approval_state
+        ? parse<{ treatmentApproved: boolean; scriptApproved: boolean }>(String(row.approval_state), {
+            treatmentApproved: false,
+            scriptApproved: false
+          })
+        : { treatmentApproved: false, scriptApproved: false },
+      currentStage: (row.current_stage ? String(row.current_stage) : "sources") as VideoProjectStage,
+      masterScript: row.master_script ? parse<ProductionScript>(String(row.master_script), undefined as never) : undefined,
+      scriptVersions: row.script_versions ? parse<ProductionScript[]>(String(row.script_versions), []) : [],
+      adaptations: row.adaptations ? parse<VideoAdaptation[]>(String(row.adaptations), []) : [],
+      shots: row.shots ? parse<VideoShot[]>(String(row.shots), []) : [],
+      storyboards: row.storyboards
+        ? parse<Array<{ frameId: string; sceneId: string; visualPrompt: string; keyframeUrl: string }>>(
+            String(row.storyboards),
+            []
+          )
+        : [],
+      cost: row.cost === null || row.cost === undefined ? undefined : Number(row.cost),
+      createdAt: String(row.created_at),
+      updatedAt: String(row.updated_at),
+
+      // Legacy UGC fields
       personaId: row.persona_id ? String(row.persona_id) : undefined,
-      sourceType: (String(row.source_type) === "product" ? "product" : "piece"),
+      sourceType: String(row.source_type) === "product" ? "product" : "piece",
       sourcePostId: row.source_post_id ? String(row.source_post_id) : undefined,
       sourceText: String(row.source_text ?? ""),
       reference: row.reference ? parse<VideoProject["reference"]>(String(row.reference), undefined as never) : undefined,
       platform: String(row.platform ?? "tiktok"),
       targetSeconds: Number(row.target_seconds ?? 30),
-      script: row.script ? parse<VideoProject["script"]>(String(row.script), undefined as never) : undefined,
-      shots: row.shots ? parse<VideoShot[]>(String(row.shots), []) : [],
-      cost: row.cost === null || row.cost === undefined ? undefined : Number(row.cost),
-      createdAt: String(row.created_at),
-      updatedAt: String(row.updated_at)
+      script: row.script ? parse<VideoProject["script"]>(String(row.script), undefined as never) : undefined
     };
   }
 
   async listVideoProjects(): Promise<VideoProject[]> {
-    return (await this.db.prepare("SELECT * FROM video_projects WHERE owner_id = ? ORDER BY created_at DESC").all(this.owner)).map((row) =>
-      this.rowToVideoProject(row)
-    );
+    const rows = await this.db.prepare("SELECT * FROM video_projects WHERE owner_id = ? ORDER BY created_at DESC").all(this.owner);
+    const projects: VideoProject[] = [];
+    for (const row of rows) {
+      const sources = await this.listVideoSources(String(row.id));
+      const project = this.rowToVideoProject(row, sources);
+      const versions = await this.listVideoScriptVersions(project.id);
+      if (versions.length) project.scriptVersions = versions;
+      projects.push(project);
+    }
+    return projects;
   }
 
   async getVideoProject(id: string): Promise<VideoProject | undefined> {
     const row = await this.db.prepare("SELECT * FROM video_projects WHERE id = ? AND owner_id = ?").get(id, this.owner);
-    return row ? this.rowToVideoProject(row) : undefined;
+    if (!row) return undefined;
+    const sources = await this.listVideoSources(id);
+    const project = this.rowToVideoProject(row, sources);
+    const versions = await this.listVideoScriptVersions(id);
+    if (versions.length) project.scriptVersions = versions;
+    return project;
   }
 
-  // Create-or-update a video project in place (like upsertDraft for the living draft).
   async saveVideoProject(input: Partial<VideoProject> & { id?: string }): Promise<VideoProject> {
     const existing = input.id ? await this.getVideoProject(input.id) : undefined;
-    const id = existing?.id ?? randomUUID();
+    const id = existing?.id ?? input.id ?? randomUUID();
     const ts = now();
     const merged: VideoProject = {
       id,
+      ownerId: existing?.ownerId ?? this.owner,
+      title: input.title ?? existing?.title ?? "Untitled Video Project",
+      format: input.format ?? existing?.format ?? "documentary",
+      audience: input.audience ?? existing?.audience ?? "",
+      objective: input.objective ?? existing?.objective ?? "",
+      privacyState: input.privacyState ?? existing?.privacyState ?? "private",
+      externalAiConsent: input.externalAiConsent ?? existing?.externalAiConsent ?? false,
+      primaryOutput: input.primaryOutput ?? existing?.primaryOutput ?? "8-12 min",
+      selectedPlatforms: input.selectedPlatforms ?? existing?.selectedPlatforms ?? ["youtube", "tiktok", "reels", "shorts"],
+      creativeBrief: input.creativeBrief ?? existing?.creativeBrief,
+      sources: input.sources ?? existing?.sources ?? [],
+      treatments: input.treatments ?? existing?.treatments ?? [],
+      selectedTreatmentId: Object.prototype.hasOwnProperty.call(input, "selectedTreatmentId")
+        ? input.selectedTreatmentId
+        : existing?.selectedTreatmentId,
+      selectedTreatment: Object.prototype.hasOwnProperty.call(input, "selectedTreatment")
+        ? input.selectedTreatment
+        : existing?.selectedTreatment,
+      visualBible: Object.prototype.hasOwnProperty.call(input, "visualBible") ? input.visualBible : existing?.visualBible,
+      approvalState: input.approvalState ?? existing?.approvalState ?? { treatmentApproved: false, scriptApproved: false },
+      currentStage: input.currentStage ?? existing?.currentStage ?? "sources",
+      masterScript: Object.prototype.hasOwnProperty.call(input, "masterScript") ? input.masterScript : existing?.masterScript,
+      scriptVersions: input.scriptVersions ?? existing?.scriptVersions ?? [],
+      adaptations: input.adaptations ?? existing?.adaptations ?? [],
+      shots: input.shots ?? existing?.shots ?? [],
+      storyboards: input.storyboards ?? existing?.storyboards ?? [],
+      cost: input.cost ?? existing?.cost,
+      createdAt: existing?.createdAt ?? ts,
+      updatedAt: ts,
+
       personaId: input.personaId ?? existing?.personaId,
       sourceType: input.sourceType ?? existing?.sourceType ?? "piece",
       sourcePostId: input.sourcePostId ?? existing?.sourcePostId,
@@ -747,21 +946,26 @@ export class Repository {
       reference: input.reference ?? existing?.reference,
       platform: input.platform ?? existing?.platform ?? "tiktok",
       targetSeconds: input.targetSeconds ?? existing?.targetSeconds ?? 30,
-      script: input.script ?? existing?.script,
-      shots: input.shots ?? existing?.shots ?? [],
-      cost: input.cost ?? existing?.cost,
-      createdAt: existing?.createdAt ?? ts,
-      updatedAt: ts
+      script: input.script ?? existing?.script
     };
+
     await this.db
       .prepare(
-        `INSERT INTO video_projects (id, owner_id, persona_id, source_type, source_post_id, source_text, reference, platform, target_seconds, script, shots, cost, created_at, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        `INSERT INTO video_projects (
+          id, owner_id, persona_id, source_type, source_post_id, source_text, reference, platform, target_seconds, script, shots, cost, created_at, updated_at,
+          title, format, audience, objective, privacy_state, external_ai_consent, primary_output, selected_platforms, creative_brief, treatments, selected_treatment_id, visual_bible, approval_state, current_stage, master_script, script_versions, adaptations, storyboards
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT (id) DO UPDATE SET
           persona_id=EXCLUDED.persona_id, source_type=EXCLUDED.source_type, source_post_id=EXCLUDED.source_post_id,
           source_text=EXCLUDED.source_text, reference=EXCLUDED.reference, platform=EXCLUDED.platform,
           target_seconds=EXCLUDED.target_seconds, script=EXCLUDED.script, shots=EXCLUDED.shots,
-          cost=EXCLUDED.cost, updated_at=EXCLUDED.updated_at`
+          cost=EXCLUDED.cost, updated_at=EXCLUDED.updated_at,
+          title=EXCLUDED.title, format=EXCLUDED.format, audience=EXCLUDED.audience, objective=EXCLUDED.objective,
+          privacy_state=EXCLUDED.privacy_state, external_ai_consent=EXCLUDED.external_ai_consent, primary_output=EXCLUDED.primary_output, selected_platforms=EXCLUDED.selected_platforms,
+          creative_brief=EXCLUDED.creative_brief, treatments=EXCLUDED.treatments, selected_treatment_id=EXCLUDED.selected_treatment_id,
+          visual_bible=EXCLUDED.visual_bible, approval_state=EXCLUDED.approval_state, current_stage=EXCLUDED.current_stage,
+          master_script=EXCLUDED.master_script, script_versions=EXCLUDED.script_versions, adaptations=EXCLUDED.adaptations, storyboards=EXCLUDED.storyboards`
       )
       .run(
         merged.id,
@@ -777,9 +981,365 @@ export class Repository {
         merged.shots.length ? json(merged.shots) : null,
         merged.cost ?? null,
         merged.createdAt,
-        merged.updatedAt
+        merged.updatedAt,
+
+        merged.title,
+        merged.format,
+        merged.audience,
+        merged.objective,
+        merged.privacyState,
+        merged.externalAiConsent ? 1 : 0,
+        merged.primaryOutput,
+        json(merged.selectedPlatforms),
+        merged.creativeBrief ? json(merged.creativeBrief) : null,
+        merged.treatments.length ? json(merged.treatments) : null,
+        merged.selectedTreatmentId ?? null,
+        merged.visualBible ? json(merged.visualBible) : null,
+        json(merged.approvalState),
+        merged.currentStage,
+        merged.masterScript ? json(merged.masterScript) : null,
+        json(merged.scriptVersions),
+        json(merged.adaptations),
+        json(merged.storyboards)
       );
+
+    if (input.scriptVersions) {
+      for (const version of input.scriptVersions) {
+        await this.saveVideoScriptVersion(id, version);
+      }
+    }
+
     return merged;
+  }
+
+  async saveVideoScriptVersion(projectId: string, script: ProductionScript): Promise<void> {
+    await this.db
+      .prepare(
+        `INSERT INTO video_script_versions (id, project_id, owner_id, version_number, script_data, approved, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?)
+         ON CONFLICT (id) DO UPDATE SET script_data=EXCLUDED.script_data, approved=EXCLUDED.approved`
+      )
+      .run(
+        script.versionId,
+        projectId,
+        this.owner,
+        script.versionNumber,
+        json(script),
+        script.approved ? 1 : 0,
+        script.createdAt
+      );
+  }
+
+  async listVideoScriptVersions(projectId: string): Promise<ProductionScript[]> {
+    const rows = await this.db
+      .prepare(
+        "SELECT script_data FROM video_script_versions WHERE project_id = ? AND owner_id = ? ORDER BY version_number ASC, created_at ASC"
+      )
+      .all(projectId, this.owner);
+    return rows.map((row) => parse<ProductionScript>(String(row.script_data), undefined as never)).filter(Boolean);
+  }
+
+  async deleteVideoProject(id: string): Promise<boolean> {
+    await this.db.prepare("DELETE FROM video_sources WHERE project_id = ? AND owner_id = ?").run(id, this.owner);
+    await this.db.prepare("DELETE FROM video_source_chunks WHERE project_id = ? AND owner_id = ?").run(id, this.owner);
+    await this.db.prepare("DELETE FROM video_script_versions WHERE project_id = ? AND owner_id = ?").run(id, this.owner);
+    await this.db.prepare("DELETE FROM video_storyboards WHERE project_id = ? AND owner_id = ?").run(id, this.owner);
+    await this.db.prepare("DELETE FROM video_evidence_images WHERE project_id = ? AND owner_id = ?").run(id, this.owner);
+    const rows = await this.db.prepare("DELETE FROM video_projects WHERE id = ? AND owner_id = ? RETURNING id").all(id, this.owner);
+    return rows.length > 0;
+  }
+
+  async duplicateVideoProject(id: string): Promise<VideoProject | undefined> {
+    const orig = await this.getVideoProject(id);
+    if (!orig) return undefined;
+    const newId = randomUUID();
+    const ts = now();
+
+    const dup: VideoProject = {
+      ...orig,
+      id: newId,
+      title: `${orig.title} (Copy)`,
+      treatments: [],
+      selectedTreatmentId: undefined,
+      selectedTreatment: undefined,
+      visualBible: undefined,
+      approvalState: { treatmentApproved: false, scriptApproved: false },
+      currentStage: "sources",
+      masterScript: undefined,
+      scriptVersions: [],
+      adaptations: [],
+      shots: [],
+      storyboards: [],
+      createdAt: ts,
+      updatedAt: ts
+    };
+
+    await this.saveVideoProject(dup);
+
+    const origSources = await this.listVideoSources(id);
+    for (const src of origSources) {
+      const newSourceId = randomUUID();
+      const imageIdMap = new Map<string, string>();
+      const copiedImages = [];
+      for (const image of await this.listEvidenceImagesForSource(src.id)) {
+        const newImageId = randomUUID();
+        imageIdMap.set(image.id, newImageId);
+        const saved = await this.saveEvidenceImage({
+          ...image,
+          id: newImageId,
+          projectId: newId,
+          sourceId: newSourceId
+        });
+        copiedImages.push({
+          ...(src.extractedImages.find((item) => item.id === image.id) ?? {
+            name: image.name,
+            mimeType: image.mimeType,
+            width: image.width,
+            height: image.height,
+            ocrText: image.ocrText
+          }),
+          id: newImageId,
+          dataUrl: saved.url,
+          locator: image.locator
+        });
+      }
+      const dupSource: VideoSource = {
+        ...src,
+        id: newSourceId,
+        projectId: newId,
+        extractedImages: copiedImages,
+        createdAt: ts,
+        updatedAt: ts
+      };
+      await this.saveVideoSource(dupSource);
+
+      const chunks = await this.getVideoSourceChunks(src.id);
+      if (chunks.length) {
+        await this.saveVideoSourceChunks(
+          chunks.map((c, idx) => ({
+            id: randomUUID(),
+            sourceId: newSourceId,
+            projectId: newId,
+            ownerId: this.owner,
+            chunkIndex: idx,
+            chunkText: c.chunkText,
+            locatorType: c.locatorType,
+            locatorValue: c.locatorType === "image" ? imageIdMap.get(c.locatorValue) ?? c.locatorValue : c.locatorValue,
+            createdAt: ts
+          }))
+        );
+      }
+    }
+
+    return this.getVideoProject(newId);
+  }
+
+  // ---- Video Sources CRUD ----
+  async listVideoSources(projectId: string): Promise<VideoSource[]> {
+    const rows = await this.db.prepare("SELECT * FROM video_sources WHERE project_id = ? AND owner_id = ? ORDER BY created_at ASC").all(projectId, this.owner);
+    return rows.map((row) => ({
+      id: String(row.id),
+      projectId: String(row.project_id),
+      filename: String(row.filename),
+      mimeType: String(row.mime_type),
+      sizeBytes: Number(row.size_bytes),
+      checksum: String(row.checksum),
+      roles: parse<VideoSourceRole[]>(String(row.roles), ["evidence"]),
+      extractionStatus: String(row.extraction_status) as any,
+      warnings: parse<string[]>(String(row.warnings), []),
+      extractedText: String(row.extracted_text ?? ""),
+      extractedImages: parse<any[]>(String(row.extracted_images), []),
+      extractedLinks: parse<any[]>(String(row.extracted_links), []),
+      locators: parse<any[]>(String(row.locators), []),
+      createdAt: String(row.created_at),
+      updatedAt: String(row.updated_at)
+    }));
+  }
+
+  async getVideoSource(id: string): Promise<VideoSource | undefined> {
+    const row = await this.db.prepare("SELECT * FROM video_sources WHERE id = ? AND owner_id = ?").get(id, this.owner);
+    if (!row) return undefined;
+    return {
+      id: String(row.id),
+      projectId: String(row.project_id),
+      filename: String(row.filename),
+      mimeType: String(row.mime_type),
+      sizeBytes: Number(row.size_bytes),
+      checksum: String(row.checksum),
+      roles: parse<VideoSourceRole[]>(String(row.roles), ["evidence"]),
+      extractionStatus: String(row.extraction_status) as any,
+      warnings: parse<string[]>(String(row.warnings), []),
+      extractedText: String(row.extracted_text ?? ""),
+      extractedImages: parse<any[]>(String(row.extracted_images), []),
+      extractedLinks: parse<any[]>(String(row.extracted_links), []),
+      locators: parse<any[]>(String(row.locators), []),
+      createdAt: String(row.created_at),
+      updatedAt: String(row.updated_at)
+    };
+  }
+
+  async saveVideoSource(source: VideoSource): Promise<VideoSource> {
+    await this.db
+      .prepare(
+        `INSERT INTO video_sources (id, project_id, owner_id, filename, mime_type, size_bytes, checksum, roles, extraction_status, warnings, extracted_text, extracted_images, extracted_links, locators, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT (id) DO UPDATE SET
+          roles=EXCLUDED.roles, extraction_status=EXCLUDED.extraction_status, warnings=EXCLUDED.warnings,
+          extracted_text=EXCLUDED.extracted_text, extracted_images=EXCLUDED.extracted_images,
+          extracted_links=EXCLUDED.extracted_links, locators=EXCLUDED.locators, updated_at=EXCLUDED.updated_at`
+      )
+      .run(
+        source.id,
+        source.projectId,
+        this.owner,
+        source.filename,
+        source.mimeType,
+        source.sizeBytes,
+        source.checksum,
+        json(source.roles),
+        source.extractionStatus,
+        json(source.warnings),
+        source.extractedText,
+        json(source.extractedImages),
+        json(source.extractedLinks),
+        json(source.locators),
+        source.createdAt,
+        source.updatedAt
+      );
+    return source;
+  }
+
+  async deleteVideoSource(id: string): Promise<boolean> {
+    await this.db.prepare("DELETE FROM video_source_chunks WHERE source_id = ? AND owner_id = ?").run(id, this.owner);
+    await this.db.prepare("DELETE FROM video_evidence_images WHERE source_id = ? AND owner_id = ?").run(id, this.owner);
+    const rows = await this.db.prepare("DELETE FROM video_sources WHERE id = ? AND owner_id = ? RETURNING id").all(id, this.owner);
+    return rows.length > 0;
+  }
+
+  async saveVideoSourceChunks(chunks: Array<{ id: string; sourceId: string; projectId: string; ownerId: string; chunkIndex: number; chunkText: string; locatorType: string; locatorValue: string; createdAt: string }>): Promise<void> {
+    for (const c of chunks) {
+      await this.db.prepare(
+        `INSERT INTO video_source_chunks (id, source_id, project_id, owner_id, chunk_index, chunk_text, locator_type, locator_value, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+      ).run(c.id, c.sourceId, c.projectId, this.owner, c.chunkIndex, c.chunkText, c.locatorType, c.locatorValue, c.createdAt);
+    }
+  }
+
+  async getVideoSourceChunks(sourceId: string): Promise<Array<{ id: string; sourceId: string; projectId: string; ownerId: string; chunkIndex: number; chunkText: string; locatorType: string; locatorValue: string; createdAt: string }>> {
+    const rows = await this.db.prepare("SELECT * FROM video_source_chunks WHERE source_id = ? AND owner_id = ? ORDER BY chunk_index ASC").all(sourceId, this.owner);
+    return rows.map((r) => ({
+      id: String(r.id),
+      sourceId: String(r.source_id),
+      projectId: String(r.project_id),
+      ownerId: String(r.owner_id),
+      chunkIndex: Number(r.chunk_index),
+      chunkText: String(r.chunk_text),
+      locatorType: String(r.locator_type),
+      locatorValue: String(r.locator_value),
+      createdAt: String(r.created_at)
+    }));
+  }
+
+  async getAllProjectChunks(projectId: string): Promise<Array<{ id: string; sourceId: string; projectId: string; ownerId: string; chunkIndex: number; chunkText: string; locatorType: string; locatorValue: string; createdAt: string }>> {
+    const rows = await this.db.prepare("SELECT * FROM video_source_chunks WHERE project_id = ? AND owner_id = ? ORDER BY chunk_index ASC").all(projectId, this.owner);
+    return rows.map((r) => ({
+      id: String(r.id),
+      sourceId: String(r.source_id),
+      projectId: String(r.project_id),
+      ownerId: String(r.owner_id),
+      chunkIndex: Number(r.chunk_index),
+      chunkText: String(r.chunk_text),
+      locatorType: String(r.locator_type),
+      locatorValue: String(r.locator_value),
+      createdAt: String(r.created_at)
+    }));
+  }
+
+  // Storyboard asset methods
+  async saveStoryboardAsset(asset: { id: string; projectId: string; sceneId: string; imageData: string; mimeType: string; visualPrompt: string }): Promise<{ id: string; keyframeUrl: string }> {
+    const ts = now();
+    await this.db.prepare(
+      `INSERT INTO video_storyboards (id, project_id, owner_id, scene_id, image_data, mime_type, visual_prompt, created_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+    ).run(asset.id, asset.projectId, this.owner, asset.sceneId, asset.imageData, asset.mimeType, asset.visualPrompt, ts);
+    return { id: asset.id, keyframeUrl: `/api/video/projects/${asset.projectId}/storyboard/${asset.id}/image` };
+  }
+
+  async getStoryboardAsset(assetId: string, projectId: string): Promise<{ id: string; imageData: string; mimeType: string } | undefined> {
+    const row = await this.db.prepare("SELECT * FROM video_storyboards WHERE id = ? AND project_id = ? AND owner_id = ?").get(assetId, projectId, this.owner);
+    if (!row) return undefined;
+    return { id: String(row.id), imageData: String(row.image_data), mimeType: String(row.mime_type) };
+  }
+
+  // Evidence image assets (downscaled preview images stored out of project JSON)
+  async saveEvidenceImage(asset: {
+    id: string;
+    projectId: string;
+    sourceId: string;
+    name: string;
+    mimeType: string;
+    width?: number;
+    height?: number;
+    ocrText?: string;
+    ocrConfidence?: number;
+    locator?: string;
+    imageData: string;
+  }): Promise<{ id: string; url: string }> {
+    const ts = now();
+    await this.db
+      .prepare(
+        `INSERT INTO video_evidence_images (id, project_id, owner_id, source_id, name, mime_type, width, height, ocr_text, ocr_confidence, locator, image_data, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+      )
+      .run(
+        asset.id,
+        asset.projectId,
+        this.owner,
+        asset.sourceId,
+        asset.name,
+        asset.mimeType,
+        asset.width ?? null,
+        asset.height ?? null,
+        asset.ocrText ?? null,
+        asset.ocrConfidence ?? null,
+        asset.locator ?? null,
+        asset.imageData,
+        ts
+      );
+    return { id: asset.id, url: `/api/video/projects/${asset.projectId}/evidence/${asset.id}` };
+  }
+
+  async getEvidenceImage(imageId: string, projectId: string): Promise<{ id: string; imageData: string; mimeType: string } | undefined> {
+    const row = await this.db.prepare("SELECT * FROM video_evidence_images WHERE id = ? AND project_id = ? AND owner_id = ?").get(imageId, projectId, this.owner);
+    if (!row) return undefined;
+    return { id: String(row.id), imageData: String(row.image_data), mimeType: String(row.mime_type) };
+  }
+
+  async listEvidenceImagesForSource(sourceId: string): Promise<Array<{
+    id: string;
+    name: string;
+    mimeType: string;
+    width?: number;
+    height?: number;
+    ocrText?: string;
+    ocrConfidence?: number;
+    locator?: string;
+    imageData: string;
+  }>> {
+    const rows = await this.db
+      .prepare("SELECT * FROM video_evidence_images WHERE source_id = ? AND owner_id = ? ORDER BY created_at ASC")
+      .all(sourceId, this.owner);
+    return rows.map((row) => ({
+      id: String(row.id),
+      name: String(row.name),
+      mimeType: String(row.mime_type),
+      width: row.width == null ? undefined : Number(row.width),
+      height: row.height == null ? undefined : Number(row.height),
+      ocrText: row.ocr_text == null ? undefined : String(row.ocr_text),
+      ocrConfidence: row.ocr_confidence == null ? undefined : Number(row.ocr_confidence),
+      locator: row.locator == null ? undefined : String(row.locator),
+      imageData: String(row.image_data)
+    }));
   }
 
   // Assign a chronological "start here" reading order (oldest = 1) across all posts.
@@ -1734,6 +2294,10 @@ function rowToPost(row: Record<string, unknown>): Post {
     coverImageUrl: row.cover_image_url ? String(row.cover_image_url) : undefined,
     readingOrder: row.reading_order === null || row.reading_order === undefined ? undefined : Number(row.reading_order),
     seo: parse<Post["seo"]>(row.seo, undefined),
+    gateScore: row.gate_score === null || row.gate_score === undefined ? undefined : Number(row.gate_score),
+    gateReason: row.gate_reason ? String(row.gate_reason) : undefined,
+    gateOverride: row.gate_override ? String(row.gate_override) : undefined,
+    gatedAt: row.gated_at ? String(row.gated_at) : undefined,
     createdAt: String(row.created_at),
     updatedAt: String(row.updated_at),
     publishedAt: row.published_at ? String(row.published_at) : undefined

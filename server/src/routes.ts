@@ -1,4 +1,6 @@
 import { randomUUID } from "node:crypto";
+import path from "node:path";
+import fs from "node:fs/promises";
 import express, { type Request, type Response, type NextFunction } from "express";
 import {
   ActivationEventInputSchema,
@@ -18,6 +20,9 @@ import {
   GridSignalsRequestSchema,
   GridStoryRequestSchema,
   GridSynthesisRequestSchema,
+  GenerateAdaptationInputSchema,
+  GenerateShotsInputSchema,
+  GenerateStoryboardInputSchema,
   PartnerFeedbackInputSchema,
   PostInputSchema,
   PromptTemplateInputSchema,
@@ -28,6 +33,11 @@ import {
   ShowInputSchema,
   VideoPersonaInputSchema,
   VideoProjectInputSchema,
+  VideoProjectUpdateSchema,
+  UpdateMasterScriptInputSchema,
+  UpdateSourceRoleInputSchema,
+  RegenerateSceneInputSchema,
+  SelectTreatmentInputSchema,
   VisualIdentitySchema,
   VoiceProfileSchema,
   WorkflowRecipeInputSchema,
@@ -37,9 +47,11 @@ import {
   type PromptStage,
   type RetrievedPost,
   type ScheduleEntry,
-  type WorkflowStageResult
+  type WorkflowStageResult,
+  type ProductionScene,
+  type ProductionScript
 } from "../../shared/src";
-import type { ReferenceBlueprint } from "../../shared/src";
+import type { ContentFormat, ReferenceBlueprint } from "../../shared/src";
 import type { Repository } from "./repository";
 import { extractCitationFlags } from "./guardrails";
 import { hashPassword, signToken, verifyPassword, verifyToken } from "./auth";
@@ -75,6 +87,19 @@ import { extractGraph, gaps as graphGaps, topoOrder, type GraphUnit } from "./co
 import { buildPreviousInputsPreview, combinedCorpusSource, type ImportContent } from "./importPipeline";
 import { applyDistillationToVoice, distillVoice } from "./voiceDistillation";
 import { desireScore, evaluateQuality, headlineScore, hookScore, rewriteSlop, scannabilityScore } from "./quality";
+import { adjudicatePiece } from "./adjudicate";
+import { READY_SCORE, publishVerdict, runAdjudicatedRevision } from "./publishGate";
+import multer from "multer";
+import os from "node:os";
+import { processSourceFile, verifyLinkUrl } from "./videoIngest";
+import {
+  runTreatmentGeneration,
+  runMasterScriptGeneration,
+  regenerateUnlockedScene,
+  runShortFormAdaptation,
+  runShotListGeneration,
+  buildExportPackage
+} from "./videoStudioV2";
 import { analyzeReference, runVideoScript, runVideoShots, suggestPersonas } from "./videoStudio";
 import { anchorImageModel, generateImage } from "./images";
 import { HEADLINE_DOCTRINE, HOOK_DOCTRINE, HOOK_STYLES, hookStyleDirective } from "../../shared/src";
@@ -82,6 +107,38 @@ import { designPartnerReadiness } from "./readiness";
 
 export function createRouter(repo: Repository) {
   const router = express.Router();
+  const requireExternalAiConsent = (project: { externalAiConsent?: boolean }) => {
+    if (aiProvider() === "openrouter" && !project.externalAiConsent) {
+      const error = new Error("Approve external AI processing for this project before generation");
+      (error as any).statusCode = 403;
+      throw error;
+    }
+  };
+  const invalidateFromSources = (projectId: string) =>
+    repo.saveVideoProject({
+      id: projectId,
+      treatments: [],
+      selectedTreatmentId: undefined,
+      selectedTreatment: undefined,
+      visualBible: undefined,
+      approvalState: { treatmentApproved: false, scriptApproved: false },
+      currentStage: "sources",
+      masterScript: undefined,
+      adaptations: [],
+      shots: [],
+      storyboards: []
+    });
+  const recordVideoGeneration = async (stage: PromptStage, content: unknown, cost: number) =>
+    repo.createGenerationRecord({
+      stage,
+      content: typeof content === "string" ? content : JSON.stringify(content),
+      provider: aiProvider(),
+      model: modelFor(stage),
+      retrievedPostIds: [],
+      corpusSegmentIds: [],
+      citationFlags: [],
+      usage: cost > 0 ? { cost } : undefined
+    });
 
   router.get("/health", (_req, res) => {
     res.json({
@@ -291,8 +348,14 @@ export function createRouter(repo: Repository) {
     res.json({ deleted: await repo.deletePersona(req.params.id) });
   });
 
-  // ---- Video Studio: reference → script → shots → keyframe storyboard ----
+  // ---- Video Studio V2: Project Library & Workspace Endpoints ----
+  const upload = multer({
+    dest: os.tmpdir(),
+    limits: { fileSize: 25 * 1024 * 1024, files: 10 }
+  });
+
   router.get("/video/projects", async (_req, res) => res.json(await repo.listVideoProjects()));
+
   router.get("/video/projects/:id", async (req, res) => {
     const project = await repo.getVideoProject(req.params.id);
     if (!project) {
@@ -302,6 +365,799 @@ export function createRouter(repo: Repository) {
     res.json(project);
   });
 
+  router.post("/video/projects", async (req, res, next) => {
+    try {
+      const input = VideoProjectInputSchema.parse(req.body);
+      const project = await repo.saveVideoProject(input);
+      res.json(project);
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  router.patch("/video/projects/:id", async (req, res, next) => {
+    try {
+      const project = await repo.getVideoProject(req.params.id);
+      if (!project) {
+        res.status(404).json({ error: "Video project not found" });
+        return;
+      }
+      const input = VideoProjectUpdateSchema.parse(req.body);
+      const directionChanged =
+        input.creativeBrief !== undefined &&
+        JSON.stringify(input.creativeBrief) !== JSON.stringify(project.creativeBrief);
+      const updated = directionChanged
+        ? await repo.saveVideoProject({
+            ...(await invalidateFromSources(project.id)),
+            id: project.id,
+            ...input
+          })
+        : await repo.saveVideoProject({ id: req.params.id, ...input });
+      res.json(updated);
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  router.post("/video/projects/:id/duplicate", async (req, res, next) => {
+    try {
+      const duplicated = await repo.duplicateVideoProject(req.params.id);
+      if (!duplicated) {
+        res.status(404).json({ error: "Project not found to duplicate" });
+        return;
+      }
+      res.json(duplicated);
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  router.delete("/video/projects/:id", async (req, res, next) => {
+    try {
+      const deleted = await repo.deleteVideoProject(req.params.id);
+      res.json({ deleted });
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  // ---- Ingestion & Sources ----
+  router.post("/video/projects/:id/sources/upload", upload.array("files", 10), async (req: any, res, next) => {
+    try {
+      const project = await repo.getVideoProject(req.params.id);
+      if (!project) {
+        res.status(404).json({ error: "Video project not found" });
+        return;
+      }
+
+      const files = (req.files || []) as Express.Multer.File[];
+      if (files.length === 0) {
+        res.status(400).json({ error: "No files uploaded" });
+        return;
+      }
+
+      // Enforce 10 files max per upload request
+      if (files.length > 10) {
+        res.status(400).json({ error: "Maximum 10 files per request permitted" });
+        return;
+      }
+
+      // Check total project upload limit (100MB max)
+      const existingSize = (project.sources || []).reduce((acc, s) => acc + (s.sizeBytes || 0), 0);
+      const newSize = files.reduce((acc, f) => acc + f.size, 0);
+      if (existingSize + newSize > 100 * 1024 * 1024) {
+        res.status(400).json({ error: "Total project source upload limit (100MB) exceeded" });
+        return;
+      }
+
+      const userRoles = req.body?.roles
+        ? UpdateSourceRoleInputSchema.parse({
+            roles: typeof req.body.roles === "string" ? JSON.parse(req.body.roles) : req.body.roles
+          }).roles
+        : undefined;
+      const processedSources = [];
+
+      try {
+        for (const file of files) {
+          // Enforce 25MB single file limit
+          if (file.size > 25 * 1024 * 1024) {
+            throw new Error(`File ${file.originalname} exceeds single-file limit of 25MB`);
+          }
+
+          // Enforce allowed file extensions
+          const ext = path.extname(file.originalname).toLowerCase();
+          if (![".docx", ".pdf", ".md", ".txt"].includes(ext)) {
+            throw new Error(`Unsupported file type: ${file.originalname}. Only .docx, .pdf, .md, .txt supported`);
+          }
+
+          const result = await processSourceFile(
+            file.path,
+            file.originalname,
+            file.mimetype,
+            userRoles,
+            project.externalAiConsent
+          );
+
+          // Deduplicate by SHA-256 checksum
+          const existingChecksumSource = (project.sources || []).find((s) => s.checksum === result.checksum);
+          if (existingChecksumSource) {
+            processedSources.push(existingChecksumSource);
+            continue;
+          }
+
+          const sourceId = randomUUID();
+          const imageIdMap = new Map<string, string>();
+
+          // Persist downscaled evidence images into owner-scoped table & return authenticated URL
+          const imageMeta = [];
+          for (const img of result.images) {
+            const evidenceImageId = randomUUID();
+            imageIdMap.set(img.id, evidenceImageId);
+            const savedImage = await repo.saveEvidenceImage({
+              id: evidenceImageId,
+              projectId: project.id,
+              sourceId,
+              name: img.name,
+              mimeType: img.mimeType,
+              width: img.width,
+              height: img.height,
+              ocrText: img.ocrText,
+              ocrConfidence: (img as any).ocrConfidence,
+              locator: img.id,
+              imageData: (img as any).buffer ? (img as any).buffer.toString("base64") : img.dataUrl.split(",")[1] || ""
+            });
+            imageMeta.push({
+              id: evidenceImageId,
+              name: img.name,
+              mimeType: img.mimeType,
+              width: img.width,
+              height: img.height,
+              ocrText: img.ocrText,
+              ocrConfidence: (img as any).ocrConfidence,
+              ocrStatus: ((img as any).ocrConfidence > 0 ? "completed" : "failed") as "completed" | "failed",
+              locator: img.id,
+              dataUrl: savedImage.url // Authenticated endpoint URL instead of raw base64 data
+            });
+          }
+
+          const source = await repo.saveVideoSource({
+            id: sourceId,
+            projectId: project.id,
+            filename: result.filename,
+            mimeType: result.mimeType,
+            sizeBytes: result.sizeBytes,
+            checksum: result.checksum,
+            roles: result.roles,
+            extractionStatus: "completed",
+            warnings: result.warnings,
+            extractedText: result.extractedText,
+            extractedImages: imageMeta,
+            extractedLinks: result.links,
+            locators: result.locators,
+            createdAt: new Date().toISOString(),
+            updatedAt: new Date().toISOString()
+          });
+
+          if (result.chunks.length > 0) {
+            const chunkRecords = result.chunks.map((c) => ({
+              id: randomUUID(),
+              sourceId: source.id,
+              projectId: project.id,
+              ownerId: currentOwner(),
+              chunkIndex: c.chunkIndex,
+              chunkText: c.chunkText,
+              locatorType: c.locatorType,
+              locatorValue: c.locatorType === "image" ? imageIdMap.get(c.locatorValue) ?? c.locatorValue : c.locatorValue,
+              createdAt: new Date().toISOString()
+            }));
+            await repo.saveVideoSourceChunks(chunkRecords);
+          }
+
+          processedSources.push(source);
+        }
+      } finally {
+        // Guarantee cleanup of EVERY temp file even if processing failed halfway
+        for (const file of files) {
+          await fs.unlink(file.path).catch(() => {});
+        }
+      }
+
+      const updatedProject = await invalidateFromSources(project.id);
+      res.json({ sources: processedSources, project: updatedProject });
+    } catch (error: any) {
+      res.status(400).json({ error: error.message || "File upload processing failed" });
+    }
+  });
+
+  // Authenticated Evidence Image Endpoint
+  router.get("/video/projects/:id/evidence/:imageId", async (req, res, next) => {
+    try {
+      const asset = await repo.getEvidenceImage(req.params.imageId, req.params.id);
+      if (!asset) {
+        res.status(404).json({ error: "Evidence image not found" });
+        return;
+      }
+      const buffer = Buffer.from(asset.imageData, "base64");
+      res.setHeader("Content-Type", asset.mimeType || "image/png");
+      res.setHeader("Cache-Control", "private, max-age=86400");
+      res.send(buffer);
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  router.post("/video/projects/:id/sources/text", async (req, res, next) => {
+    try {
+      const project = await repo.getVideoProject(req.params.id);
+      if (!project) {
+        res.status(404).json({ error: "Video project not found" });
+        return;
+      }
+      const text = String(req.body?.text ?? "").trim();
+      const title = String(req.body?.title ?? "Pasted Text Source");
+      if (!text) {
+        res.status(400).json({ error: "Text content is required" });
+        return;
+      }
+
+      const sourceId = randomUUID();
+      const source = await repo.saveVideoSource({
+        id: sourceId,
+        projectId: project.id,
+        filename: title,
+        mimeType: "text/plain",
+        sizeBytes: Buffer.byteLength(text, "utf8"),
+        checksum: randomUUID(),
+        roles: req.body?.roles || ["evidence"],
+        extractionStatus: "completed",
+        warnings: [],
+        extractedText: text,
+        extractedImages: [],
+        extractedLinks: [],
+        locators: [{ id: "p-1", type: "paragraph", label: "Pasted Passage" }],
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString()
+      });
+
+      await repo.saveVideoSourceChunks([
+        {
+          id: randomUUID(),
+          sourceId: source.id,
+          projectId: project.id,
+          ownerId: currentOwner(),
+          chunkIndex: 0,
+          chunkText: text.slice(0, 1200),
+          locatorType: "text-pasted",
+          locatorValue: title,
+          createdAt: new Date().toISOString()
+        }
+      ]);
+
+      const updated = await invalidateFromSources(project.id);
+      res.json({ source, project: updated });
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  router.patch("/video/sources/:sourceId", async (req, res, next) => {
+    try {
+      const source = await repo.getVideoSource(req.params.sourceId);
+      if (!source) {
+        res.status(404).json({ error: "Source not found" });
+        return;
+      }
+      source.roles = UpdateSourceRoleInputSchema.parse(req.body).roles;
+      source.updatedAt = new Date().toISOString();
+      const updated = await repo.saveVideoSource(source);
+      await invalidateFromSources(source.projectId);
+      res.json(updated);
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  router.delete("/video/sources/:sourceId", async (req, res, next) => {
+    try {
+      const source = await repo.getVideoSource(req.params.sourceId);
+      const deleted = await repo.deleteVideoSource(req.params.sourceId);
+      if (source) await invalidateFromSources(source.projectId);
+      res.json({ deleted });
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  router.post("/video/projects/:id/verify-links", async (req, res, next) => {
+    try {
+      const project = await repo.getVideoProject(req.params.id);
+      if (!project) {
+        res.status(404).json({ error: "Project not found" });
+        return;
+      }
+      const verifiedSources = [];
+      for (const source of project.sources) {
+        if (source.extractedLinks.length > 0) {
+          const updatedLinks = [];
+          for (const link of source.extractedLinks) {
+            const verification = await verifyLinkUrl(link.url);
+            updatedLinks.push({
+              ...link,
+              status: verification.status,
+              summary: verification.summary
+            });
+          }
+          source.extractedLinks = updatedLinks;
+          source.updatedAt = new Date().toISOString();
+          await repo.saveVideoSource(source);
+        }
+        verifiedSources.push(source);
+      }
+      res.json({ sources: verifiedSources });
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  // ---- Treatments ----
+  router.post("/video/projects/:id/treatments/generate", async (req, res, next) => {
+    try {
+      const project = await repo.getVideoProject(req.params.id);
+      if (!project) {
+        res.status(404).json({ error: "Project not found" });
+        return;
+      }
+      requireExternalAiConsent(project);
+      const chunks = await repo.getAllProjectChunks(project.id);
+      const { treatments, visualBible, cost } = await runTreatmentGeneration({ project, chunks });
+      await recordVideoGeneration("video-treatment", { treatments, visualBible }, cost);
+
+      const updated = await repo.saveVideoProject({
+        id: project.id,
+        treatments,
+        selectedTreatmentId: undefined,
+        selectedTreatment: undefined,
+        visualBible,
+        approvalState: { treatmentApproved: false, scriptApproved: false },
+        currentStage: "treatments",
+        masterScript: undefined,
+        adaptations: [],
+        shots: [],
+        storyboards: [],
+        cost: (project.cost ?? 0) + cost
+      });
+      res.json(updated);
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  router.post("/video/projects/:id/treatments/select", async (req, res, next) => {
+    try {
+      const project = await repo.getVideoProject(req.params.id);
+      if (!project) {
+        res.status(404).json({ error: "Project not found" });
+        return;
+      }
+      const treatmentId = SelectTreatmentInputSchema.parse(req.body).treatmentId;
+      const selected = project.treatments.find((t) => t.id === treatmentId);
+      if (!selected) {
+        res.status(400).json({ error: "Selected treatment not found" });
+        return;
+      }
+
+      const updated = await repo.saveVideoProject({
+        id: project.id,
+        selectedTreatmentId: selected.id,
+        selectedTreatment: selected,
+        approvalState: { ...project.approvalState, treatmentApproved: true },
+        currentStage: "master-script"
+      });
+      res.json(updated);
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  // ---- Master Script & Scene Management ----
+  router.post("/video/projects/:id/script/generate", async (req, res, next) => {
+    try {
+      const project = await repo.getVideoProject(req.params.id);
+      if (!project) {
+        res.status(404).json({ error: "Project not found" });
+        return;
+      }
+      requireExternalAiConsent(project);
+      if (!project.selectedTreatment || !project.visualBible) {
+        res.status(400).json({ error: "Select and approve a treatment first" });
+        return;
+      }
+      const chunks = await repo.getAllProjectChunks(project.id);
+      const { script, cost } = await runMasterScriptGeneration({
+        project,
+        treatment: project.selectedTreatment,
+        visualBible: project.visualBible,
+        chunks
+      });
+      await recordVideoGeneration("video-script", script, cost);
+
+      const scriptVersions = [...project.scriptVersions, script];
+
+      const updated = await repo.saveVideoProject({
+        id: project.id,
+        masterScript: script,
+        scriptVersions,
+        approvalState: { treatmentApproved: true, scriptApproved: false },
+        currentStage: "master-script",
+        adaptations: [],
+        shots: [],
+        storyboards: [],
+        cost: (project.cost ?? 0) + cost
+      });
+      res.json(updated);
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  router.patch("/video/projects/:id/script", async (req, res, next) => {
+    try {
+      const project = await repo.getVideoProject(req.params.id);
+      if (!project || !project.masterScript) {
+        res.status(404).json({ error: "Master script not found" });
+        return;
+      }
+
+      const { scenes: newScenes } = UpdateMasterScriptInputSchema.parse(req.body);
+
+      const updatedScript: ProductionScript = {
+        ...project.masterScript,
+        approved: false,
+        approvedAt: undefined,
+        scenes: newScenes,
+        createdAt: project.masterScript.createdAt
+      };
+
+      const updated = await repo.saveVideoProject({
+        id: project.id,
+        masterScript: updatedScript,
+        approvalState: { treatmentApproved: true, scriptApproved: false },
+        currentStage: "master-script",
+        adaptations: [],
+        shots: [],
+        storyboards: []
+      });
+      res.json(updated);
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  router.post("/video/projects/:id/script/scene-regenerate", async (req, res, next) => {
+    try {
+      const project = await repo.getVideoProject(req.params.id);
+      if (!project || !project.masterScript || !project.selectedTreatment || !project.visualBible) {
+        res.status(400).json({ error: "Project, master script, and treatment required" });
+        return;
+      }
+      const { sceneIndex } = RegenerateSceneInputSchema.parse(req.body);
+      requireExternalAiConsent(project);
+
+      const updatedScript = await regenerateUnlockedScene({
+        currentScript: project.masterScript,
+        targetSceneIndex: sceneIndex,
+        treatment: project.selectedTreatment,
+        visualBible: project.visualBible,
+        project
+      });
+
+      const updated = await repo.saveVideoProject({
+        id: project.id,
+        masterScript: updatedScript,
+        scriptVersions: [...project.scriptVersions, updatedScript],
+        approvalState: { treatmentApproved: true, scriptApproved: false },
+        currentStage: "master-script",
+        adaptations: [],
+        shots: [],
+        storyboards: []
+      });
+      res.json(updated);
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  router.post("/video/projects/:id/script/approve", async (req, res, next) => {
+    try {
+      const project = await repo.getVideoProject(req.params.id);
+      if (!project || !project.masterScript) {
+        res.status(404).json({ error: "Master script not found" });
+        return;
+      }
+
+      const approvedScript: ProductionScript = {
+        ...project.masterScript,
+        approved: true,
+        approvedAt: new Date().toISOString()
+      };
+
+      const updated = await repo.saveVideoProject({
+        id: project.id,
+        masterScript: approvedScript,
+        approvalState: { treatmentApproved: true, scriptApproved: true },
+        currentStage: "adaptations"
+      });
+      res.json(updated);
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  router.post("/video/projects/:id/script/versions", async (req, res, next) => {
+    try {
+      const project = await repo.getVideoProject(req.params.id);
+      if (!project?.masterScript) {
+        res.status(404).json({ error: "Master script not found" });
+        return;
+      }
+      const snapshot: ProductionScript = {
+        ...project.masterScript,
+        versionId: randomUUID(),
+        versionNumber: Math.max(0, ...project.scriptVersions.map((version) => version.versionNumber)) + 1,
+        createdAt: new Date().toISOString()
+      };
+      const updated = await repo.saveVideoProject({
+        id: project.id,
+        masterScript: snapshot,
+        scriptVersions: [...project.scriptVersions, snapshot]
+      });
+      res.json(updated);
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  router.post("/video/projects/:id/script/versions/:versionId/restore", async (req, res, next) => {
+    try {
+      const project = await repo.getVideoProject(req.params.id);
+      const version = project?.scriptVersions.find((item) => item.versionId === req.params.versionId);
+      if (!project || !version) {
+        res.status(404).json({ error: "Script version not found" });
+        return;
+      }
+      const restored: ProductionScript = {
+        ...version,
+        versionId: randomUUID(),
+        versionNumber: Math.max(...project.scriptVersions.map((item) => item.versionNumber)) + 1,
+        approved: false,
+        approvedAt: undefined,
+        createdAt: new Date().toISOString()
+      };
+      const updated = await repo.saveVideoProject({
+        id: project.id,
+        masterScript: restored,
+        scriptVersions: [...project.scriptVersions, restored],
+        approvalState: { treatmentApproved: true, scriptApproved: false },
+        currentStage: "master-script",
+        adaptations: [],
+        shots: [],
+        storyboards: []
+      });
+      res.json(updated);
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  // ---- Adaptations ----
+  router.post("/video/projects/:id/adaptations/generate", async (req, res, next) => {
+    try {
+      const project = await repo.getVideoProject(req.params.id);
+      if (!project || !project.masterScript || !project.approvalState.scriptApproved) {
+        res.status(400).json({ error: "Master script must be approved first" });
+        return;
+      }
+      const { platform, targetSeconds } = GenerateAdaptationInputSchema.parse(req.body);
+      requireExternalAiConsent(project);
+
+      const { adaptation, cost } = await runShortFormAdaptation({ project, masterScript: project.masterScript, platform, targetSeconds });
+      await recordVideoGeneration("video-adaptation", adaptation, cost);
+
+      const adaptations = [
+        ...project.adaptations.filter((a) => !(a.platform === platform && a.targetSeconds === targetSeconds)),
+        adaptation
+      ];
+      const updated = await repo.saveVideoProject({
+        id: project.id,
+        adaptations,
+        cost: (project.cost ?? 0) + cost
+      });
+      res.json(updated);
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  // ---- Shots & Storyboard ----
+  router.post("/video/projects/:id/shots/generate", async (req, res, next) => {
+    try {
+      const project = await repo.getVideoProject(req.params.id);
+      if (!project || !project.masterScript || !project.visualBible) {
+        res.status(400).json({ error: "Master script and visual bible required" });
+        return;
+      }
+
+      const input = GenerateShotsInputSchema.parse(req.body ?? {});
+      requireExternalAiConsent(project);
+      const targetScript =
+        input.scriptKind === "adaptation"
+          ? project.adaptations.find((adaptation) => adaptation.id === input.scriptId)
+          : project.masterScript;
+      if (!targetScript) {
+        res.status(400).json({ error: "Requested source script was not found" });
+        return;
+      }
+      const scriptForShots: ProductionScript =
+        "versionId" in targetScript
+          ? targetScript
+          : {
+              versionId: targetScript.id,
+              versionNumber: 1,
+              scenes: targetScript.scenes,
+              totalSeconds: targetScript.totalSeconds,
+              approved: targetScript.approved,
+              createdAt: targetScript.createdAt
+            };
+      const { shots: generatedShots, cost } = await runShotListGeneration({
+        script: scriptForShots,
+        visualBible: project.visualBible
+      });
+      const shots = generatedShots.map((shot, index) => ({
+        ...shot,
+        id: shot.id ?? randomUUID(),
+        sceneId: targetScript.scenes[index]?.sceneId,
+        scriptKind: input.scriptKind,
+        scriptId: input.scriptKind === "adaptation" ? input.scriptId : project.masterScript?.versionId,
+        aspectRatio: input.scriptKind === "adaptation" ? ("9:16" as const) : ("16:9" as const),
+        genericPrompt: shot.genericPrompt ?? shot.visualPrompt
+      }));
+      await recordVideoGeneration("video-shots", shots, cost);
+      const updated = await repo.saveVideoProject({
+        id: project.id,
+        shots,
+        cost: (project.cost ?? 0) + cost
+      });
+      res.json(updated);
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  router.post("/video/projects/:id/storyboard/generate", async (req, res, next) => {
+    try {
+      const project = await repo.getVideoProject(req.params.id);
+      if (!project || !project.shots.length) {
+        res.status(400).json({ error: "Shot list required" });
+        return;
+      }
+      const { shotIndexes } = GenerateStoryboardInputSchema.parse(req.body ?? {});
+      requireExternalAiConsent(project);
+      const selectedIndexes = new Set(shotIndexes ?? project.shots.map((shot) => shot.index));
+      const selectedShots = project.shots.filter((shot) => selectedIndexes.has(shot.index));
+      const selectedSceneIds = new Set(selectedShots.map((shot, index) => shot.sceneId ?? `sc-${shot.index + 1}`));
+      const storyboards = project.storyboards.filter((frame) => !selectedSceneIds.has(frame.sceneId));
+      let storyboardCost = 0;
+
+      for (const shot of selectedShots) {
+        const frameId = randomUUID();
+        const sceneId = shot.sceneId ?? `sc-${shot.index + 1}`;
+        try {
+          const aspect = shot.aspectRatio ?? "16:9";
+          const image = await generateImage(
+            `${aspect} storyboard keyframe for a professional ${project.format} video. ${shot.visualPrompt}`.slice(0, 1600)
+          );
+          await recordImageCost(repo, {
+            prompt: shot.visualPrompt,
+            provider: image.provider,
+            model: image.model,
+            cost: image.cost
+          });
+          storyboardCost += image.cost ?? 0;
+          let imageData = image.url;
+          let mimeType = "image/png";
+          if (imageData.startsWith("data:") && !imageData.includes(";base64,")) {
+            const comma = imageData.indexOf(",");
+            mimeType = imageData.slice(5, imageData.indexOf(";") > 0 ? imageData.indexOf(";") : comma) || "image/svg+xml";
+            imageData = `data:${mimeType};base64,${Buffer.from(decodeURIComponent(imageData.slice(comma + 1))).toString("base64")}`;
+          } else if (/^https?:\/\//.test(imageData)) {
+            const response = await fetch(imageData);
+            if (!response.ok) throw new Error(`Generated image download failed (${response.status})`);
+            mimeType = response.headers.get("content-type")?.split(";")[0] || "image/png";
+            imageData = `data:${mimeType};base64,${Buffer.from(await response.arrayBuffer()).toString("base64")}`;
+          } else {
+            mimeType = imageData.match(/^data:([^;]+)/)?.[1] ?? "image/png";
+          }
+          const savedAsset = await repo.saveStoryboardAsset({
+            id: frameId,
+            projectId: project.id,
+            sceneId,
+            imageData,
+            mimeType,
+            visualPrompt: shot.visualPrompt
+          });
+          storyboards.push({
+            frameId,
+            sceneId,
+            shotId: shot.id,
+            visualPrompt: shot.visualPrompt,
+            keyframeUrl: savedAsset.keyframeUrl,
+            status: "completed" as const,
+            provider: image.provider,
+            cost: image.cost
+          });
+        } catch (error) {
+          storyboards.push({
+            frameId,
+            sceneId,
+            shotId: shot.id,
+            visualPrompt: shot.visualPrompt,
+            keyframeUrl: "",
+            status: "failed" as const,
+            error: error instanceof Error ? error.message : "Storyboard generation failed"
+          });
+        }
+      }
+
+      const updated = await repo.saveVideoProject({
+        id: project.id,
+        storyboards,
+        cost: (project.cost ?? 0) + storyboardCost
+      });
+      res.json(updated);
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  router.get("/video/projects/:id/storyboard/:frameId/image", async (req, res, next) => {
+    try {
+      const asset = await repo.getStoryboardAsset(req.params.frameId, req.params.id);
+      if (!asset) {
+        res.status(404).send("Storyboard keyframe not found");
+        return;
+      }
+
+      if (asset.imageData.startsWith("data:")) {
+        const matches = asset.imageData.match(/^data:([^;]+);base64,(.+)$/);
+        if (matches) {
+          res.setHeader("Content-Type", matches[1]);
+          res.send(Buffer.from(matches[2], "base64"));
+          return;
+        }
+      }
+      res.setHeader("Content-Type", asset.mimeType || "image/png");
+      res.send(Buffer.from(asset.imageData, "utf8"));
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  // ---- Export ----
+  router.get("/video/projects/:id/export", async (req, res, next) => {
+    try {
+      const project = await repo.getVideoProject(req.params.id);
+      if (!project) {
+        res.status(404).json({ error: "Project not found" });
+        return;
+      }
+      const exportPkg = buildExportPackage(project);
+      res.json(exportPkg);
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  // ---- Legacy UGC Compatibility Routes ----
   router.post("/video/reference", async (req, res, next) => {
     try {
       res.json({ reference: await analyzeReference(String(req.body?.transcript ?? "")) });
@@ -318,12 +1174,12 @@ export function createRouter(repo: Repository) {
       const persona = base.personaId ? await repo.getPersona(base.personaId) : undefined;
       const promptVersion = await repo.getActivePromptVersion("video-script");
       const { script, cost } = await runVideoScript({
-        sourceText: base.sourceText,
-        sourceType: base.sourceType,
+        sourceText: base.sourceText ?? "",
+        sourceType: base.sourceType ?? "piece",
         persona,
         blueprint: reference,
-        platform: base.platform,
-        targetSeconds: base.targetSeconds,
+        platform: base.platform ?? "tiktok",
+        targetSeconds: base.targetSeconds ?? 30,
         promptBody: promptVersion?.body
       });
       const project = await repo.saveVideoProject({ id: projectId, ...base, reference, script, cost });
@@ -333,7 +1189,6 @@ export function createRouter(repo: Repository) {
     }
   });
 
-  // Cast: suggest one persona per attention angle, matched to the project's script.
   router.post("/video/personas/suggest", async (req, res, next) => {
     try {
       let script;
@@ -377,10 +1232,6 @@ export function createRouter(repo: Repository) {
       const look = persona
         ? [persona.appearance, persona.wardrobe, persona.setting, persona.visualStyle].filter(Boolean).join(", ")
         : "";
-      // Google Flow holds character consistency from a reference "ingredient", not
-      // from a still per shot — so generate ONE anchor (premium tier, cached on the
-      // persona so reruns cost nothing) and reuse it. Per-shot stills are opt-in
-      // (`perShot: true`) and use the cheap tier.
       let extra = 0;
       let imagesGenerated = 0;
       let anchorUrl = persona?.anchorImageUrl;
@@ -398,7 +1249,6 @@ export function createRouter(repo: Repository) {
       const shots = [];
       for (const shot of project.shots) {
         if (!perShot) {
-          // Every shot inherits the one anchor — same face, one image, no drift.
           shots.push({ ...shot, keyframeUrl: shot.keyframeUrl ?? anchorUrl });
           continue;
         }
@@ -1242,6 +2092,111 @@ export function createRouter(repo: Repository) {
     res.json(scannabilityScore(String(req.body?.text ?? "")));
   });
 
+  // ---- Adjudicated quality gate ----
+  // Scan (free) → adjudicate candidates through the six gates → base-rate check
+  // → place on the 1–7 ladder → a publish verdict with a named reason.
+  router.post("/gate/adjudicate", async (req, res, next) => {
+    try {
+      const text = String(req.body?.text ?? "");
+      if (!text.trim()) {
+        res.status(400).json({ error: "text is required" });
+        return;
+      }
+      const format = (req.body?.format as ContentFormat) ?? "essay";
+      const postId = req.body?.postId ? String(req.body.postId) : undefined;
+      const promptVersion = await repo.getActivePromptVersion("adjudicate");
+      const report = await adjudicatePiece({ text, format, promptBody: promptVersion?.body });
+      const verdict = publishVerdict({ text, report });
+      await repo.recordGateRun({
+        postId,
+        score: verdict.score,
+        ready: verdict.ready,
+        reason: verdict.reason,
+        findingsCount: report.findings.length
+      });
+      await repo.recordFindings(postId, report.findings);
+      res.json({ report, verdict });
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  // Targeted revision: fix only the adjudicated spans, then re-gate.
+  router.post("/gate/revise", async (req, res, next) => {
+    try {
+      const text = String(req.body?.text ?? "");
+      if (!text.trim()) {
+        res.status(400).json({ error: "text is required" });
+        return;
+      }
+      const format = (req.body?.format as ContentFormat) ?? "essay";
+      const postId = req.body?.postId ? String(req.body.postId) : undefined;
+      const promptVersion = await repo.getActivePromptVersion("adjudicate");
+      const before = await adjudicatePiece({ text, format, promptBody: promptVersion?.body });
+      const beforeVerdict = publishVerdict({ text, report: before });
+      const revision = await runAdjudicatedRevision({ text, report: before, voice: await repo.getVoice() });
+      const after = revision.changed ? await adjudicatePiece({ text: revision.text, format }) : before;
+      const afterVerdict = revision.changed ? publishVerdict({ text: revision.text, report: after }) : beforeVerdict;
+      if (revision.changed) {
+        await repo.recordGateRun({
+          postId,
+          score: afterVerdict.score,
+          ready: afterVerdict.ready,
+          reason: afterVerdict.reason,
+          findingsCount: after.findings.length
+        });
+      }
+      res.json({
+        text: revision.text,
+        changed: revision.changed,
+        rejected: revision.rejected,
+        before: { report: before, verdict: beforeVerdict },
+        after: { report: after, verdict: afterVerdict }
+      });
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  // The hard block. A piece reaches the queue by clearing the gate, or by an
+  // override that records why — never silently.
+  router.post("/gate/ready/:id", async (req, res, next) => {
+    try {
+      const post = await repo.getPost(req.params.id);
+      if (!post) {
+        res.status(404).json({ error: "Post not found" });
+        return;
+      }
+      const override = req.body?.override ? String(req.body.override).trim() : "";
+      const report = await adjudicatePiece({ text: post.body, format: (req.body?.format as ContentFormat) ?? "essay" });
+      const verdict = publishVerdict({ text: post.body, report });
+      if (!verdict.ready && !override) {
+        res.status(409).json({
+          error: "Blocked by the publish gate",
+          verdict,
+          report,
+          hint: `Clear the ${report.findings.length} located defect(s), or resend with an override reason.`
+        });
+        return;
+      }
+      await repo.recordGateRun({
+        postId: post.id,
+        score: verdict.score,
+        ready: true,
+        reason: verdict.ready ? verdict.reason : `Override: ${override}`,
+        findingsCount: report.findings.length,
+        override: override || undefined
+      });
+      const updated = await repo.setPostStatus(post.id, "ready");
+      res.json({ post: updated, verdict, overridden: Boolean(override) && !verdict.ready });
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  router.get("/gate/queue", async (_req, res) => res.json(await repo.readyQueue()));
+  router.get("/gate/profile", async (_req, res) => res.json({ ...(await repo.defectProfile()), readyScore: READY_SCORE }));
+
   // Scannability pass: score → fix the flagged spots → auto-save → re-score.
   router.post("/generate/scannability-pass", async (req, res, next) => {
     try {
@@ -1338,8 +2293,19 @@ export function createRouter(repo: Repository) {
   });
 
   router.use((error: unknown, _req: Request, res: Response, _next: NextFunction) => {
-    const message = error instanceof Error ? error.message : "Unknown error";
-    res.status(500).json({ error: message, requestId: randomUUID() });
+    const requestId = randomUUID();
+    const statusCode =
+      typeof error === "object" && error !== null && "statusCode" in error
+        ? Number((error as { statusCode?: number }).statusCode) || 500
+        : error instanceof Error && error.name === "ZodError"
+          ? 400
+          : 500;
+    const message =
+      statusCode < 500 && error instanceof Error
+        ? error.message
+        : "The request could not be completed. Reference the request ID if you need support.";
+    console.error(`[${requestId}]`, error);
+    res.status(statusCode).json({ error: message, requestId });
   });
 
   return router;
@@ -1372,7 +2338,8 @@ export function isCostGatedMethodPath(method: string, path: string) {
     "/grid/story",
     "/experiments/run",
     "/package/",
-    "/graph/"
+    "/graph/",
+    "/video/"
   ].some((prefix) => path.startsWith(prefix));
 }
 
