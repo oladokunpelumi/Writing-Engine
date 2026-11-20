@@ -54,6 +54,7 @@ import type {
   ProductionScene,
   ProductionScript,
   VideoAdaptation,
+  MotionStory,
   VideoProjectStage,
   VisualBible
 } from "../../shared/src";
@@ -858,6 +859,7 @@ export class Repository {
       masterScript: row.master_script ? parse<ProductionScript>(String(row.master_script), undefined as never) : undefined,
       scriptVersions: row.script_versions ? parse<ProductionScript[]>(String(row.script_versions), []) : [],
       adaptations: row.adaptations ? parse<VideoAdaptation[]>(String(row.adaptations), []) : [],
+      motionStory: row.motion_story ? parse<MotionStory>(String(row.motion_story), undefined as never) : undefined,
       shots: row.shots ? parse<VideoShot[]>(String(row.shots), []) : [],
       storyboards: row.storyboards
         ? parse<Array<{ frameId: string; sceneId: string; visualPrompt: string; keyframeUrl: string }>>(
@@ -934,6 +936,7 @@ export class Repository {
       masterScript: Object.prototype.hasOwnProperty.call(input, "masterScript") ? input.masterScript : existing?.masterScript,
       scriptVersions: input.scriptVersions ?? existing?.scriptVersions ?? [],
       adaptations: input.adaptations ?? existing?.adaptations ?? [],
+      motionStory: Object.prototype.hasOwnProperty.call(input, "motionStory") ? input.motionStory : existing?.motionStory,
       shots: input.shots ?? existing?.shots ?? [],
       storyboards: input.storyboards ?? existing?.storyboards ?? [],
       cost: input.cost ?? existing?.cost,
@@ -954,9 +957,9 @@ export class Repository {
       .prepare(
         `INSERT INTO video_projects (
           id, owner_id, persona_id, source_type, source_post_id, source_text, reference, platform, target_seconds, script, shots, cost, created_at, updated_at,
-          title, format, audience, objective, privacy_state, external_ai_consent, primary_output, selected_platforms, creative_brief, treatments, selected_treatment_id, visual_bible, approval_state, current_stage, master_script, script_versions, adaptations, storyboards
+          title, format, audience, objective, privacy_state, external_ai_consent, primary_output, selected_platforms, creative_brief, treatments, selected_treatment_id, visual_bible, approval_state, current_stage, master_script, script_versions, adaptations, storyboards, motion_story
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT (id) DO UPDATE SET
           persona_id=EXCLUDED.persona_id, source_type=EXCLUDED.source_type, source_post_id=EXCLUDED.source_post_id,
           source_text=EXCLUDED.source_text, reference=EXCLUDED.reference, platform=EXCLUDED.platform,
@@ -966,7 +969,8 @@ export class Repository {
           privacy_state=EXCLUDED.privacy_state, external_ai_consent=EXCLUDED.external_ai_consent, primary_output=EXCLUDED.primary_output, selected_platforms=EXCLUDED.selected_platforms,
           creative_brief=EXCLUDED.creative_brief, treatments=EXCLUDED.treatments, selected_treatment_id=EXCLUDED.selected_treatment_id,
           visual_bible=EXCLUDED.visual_bible, approval_state=EXCLUDED.approval_state, current_stage=EXCLUDED.current_stage,
-          master_script=EXCLUDED.master_script, script_versions=EXCLUDED.script_versions, adaptations=EXCLUDED.adaptations, storyboards=EXCLUDED.storyboards`
+          master_script=EXCLUDED.master_script, script_versions=EXCLUDED.script_versions, adaptations=EXCLUDED.adaptations, storyboards=EXCLUDED.storyboards,
+          motion_story=EXCLUDED.motion_story`
       )
       .run(
         merged.id,
@@ -1001,7 +1005,8 @@ export class Repository {
         merged.masterScript ? json(merged.masterScript) : null,
         json(merged.scriptVersions),
         json(merged.adaptations),
-        json(merged.storyboards)
+        json(merged.storyboards),
+        merged.motionStory ? json(merged.motionStory) : null
       );
 
     if (input.scriptVersions) {

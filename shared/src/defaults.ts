@@ -133,6 +133,24 @@ export const ONE_THING_DOCTRINE = [
   "State the one thing plainly enough that a reader could repeat it back in a single sentence."
 ].join("\n");
 
+// ---- Motion story: writing -> narrative -> kinetic type ----
+// Turns a finished piece into a timed beat list a motion build can read. The
+// lessons come from the motion pack (motion-doctrine, cut-the-curve, the
+// content-studio stage gates) and the gym-reel review: the hook has to read
+// at frame 0 with the sound off, a card can only hold what a viewer can read
+// in its hold time, and the film moves as one current, not a stack of slides.
+// Reuses ONE_THING_DOCTRINE (the through-line), HOOK_DOCTRINE (recognition
+// first) and DESIRE_DOCTRINE (someone wants something in every beat).
+export const MOTION_STORY_DOCTRINE = [
+  "You are adapting the writer's own finished piece into a kinetic-type story: words on screen that move, read with the sound OFF. Nothing here is narrated aloud.",
+  "BEAT SHAPE: a hook, two to five turns or proofs, one payoff, and an optional CTA. The hook is on screen from second 0 and is readable within 1.5 seconds. The payoff is the one thing, said plainest, and it gets the longest hold.",
+  "USE THE WRITER'S WORDS. Every beat names the exact sentence of the piece it comes from (sourceQuote, copied verbatim). On-screen lines may compress that sentence but may not add a claim, number, name or example the piece does not contain. If the piece has no number, the video has no number.",
+  "ONE IDEA PER CARD. At most 3 lines per beat, at most 7 words per line. A viewer reads about 3 words a second on moving type, so a beat holds at least 0.6 seconds plus 1 second for every 3 words on screen.",
+  "MOVE AS ONE FILM. Each beat's transitionOut sets how the next one enters: zoom-through or inverse-zoom to go deeper or pull back, cut-the-curve or waterfall to keep momentum, rack-focus to shift attention, hold for the beat of stillness before the payoff, cut only on a hard turn.",
+  "EMPHASIS lands on the one or two words in each beat that carry the meaning (a number, a name, the turn word). Never on filler.",
+  "No hashtags, no emoji, no 'link in bio' unless the piece asks the reader to do something specific."
+].join("\n");
+
 // ---- BUILD 2: UGC Video Studio doctrines ----
 // Short-form UGC craft. Reuses BUILD 1's shared primitives: the one through-line
 // is ONE_THING_DOCTRINE; the spoken hook is generated + scored by the shared
@@ -311,6 +329,14 @@ export const DEFAULT_PROMPT_TEMPLATES: PromptTemplateInput[] = [
     notes: "UGC Video Studio (BUILD 2)",
     body:
       "Turn the script into a shot list for Google Flow / Veo 3. Return ONLY strict JSON: { shots: [{ index, spokenLine, visualPrompt, audioCue, onScreenText, durationSec }] }. One shot per beat, ~8s each. Each visualPrompt uses Veo anatomy (subject·action·setting·camera·lighting·mood·style·audio) and describes the persona IDENTICALLY every shot for consistency; put the spoken line in the audio as quoted dialogue."
+  },
+  {
+    stage: "motion-story",
+    name: "Motion: kinetic-type story",
+    description: "Turns a finished piece into timed kinetic-type beats (hook, turns, payoff) traced to its own sentences.",
+    notes: "Writing -> narrative story -> motion graphics",
+    body:
+      'Adapt the piece into a kinetic-type story for the given length. Return ONLY strict JSON: { "title", "oneThing", "hookCandidates": [3 short hook lines], "beats": [{ "role": "hook"|"turn"|"proof"|"payoff"|"cta", "seconds", "lines": [], "emphasis": [], "visualAction", "transitionOut", "sourceQuote" }] }. Beat 0 is the hook. Seconds across beats add up to the target length. sourceQuote is copied verbatim from the piece.'
   },
   {
     stage: "adjudicate",

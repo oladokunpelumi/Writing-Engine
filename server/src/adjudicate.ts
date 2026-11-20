@@ -223,7 +223,21 @@ export async function adjudicatePiece(input: {
   promptBody?: string;
 }): Promise<AdjudicationReport> {
   const format = input.format ?? "essay";
-  const units = segmentPiece(input.text, format);
+  return adjudicateUnits({ units: segmentPiece(input.text, format), format, promptBody: input.promptBody });
+}
+
+/**
+ * Adjudicate pre-segmented units — for surfaces that are not prose paragraphs,
+ * such as the on-screen lines of a motion story, where each card already has
+ * its own position (title for the hook, caption for a turn, cta for the ask).
+ */
+export async function adjudicateUnits(input: {
+  units: PieceUnit[];
+  format?: ContentFormat;
+  promptBody?: string;
+}): Promise<AdjudicationReport> {
+  const format = input.format ?? "essay";
+  const units = input.units;
   const band = BASE_RATE_BANDS[format] ?? [0.05, 0.35];
 
   const candidates: Candidate[] = [];

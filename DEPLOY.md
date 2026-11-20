@@ -79,6 +79,7 @@ the local pglite database to disk (otherwise it's in-memory).
 | `MODEL_VIDEO_SCRIPT` | Optional master-script model override. |
 | `MODEL_VIDEO_ADAPTATION` | Optional platform-adaptation model override. |
 | `MODEL_VIDEO_SHOTS` | Optional shot-prompt model override. |
+| `MODEL_MOTION_STORY` | Optional kinetic-type motion-story model override. |
 | `MODEL_IMAGE` | Storyboard keyframe image model. |
 | `IMAGE_COST_USD` | Fallback cost estimate when the image provider omits cost. |
 

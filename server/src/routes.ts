@@ -22,6 +22,8 @@ import {
   GridSynthesisRequestSchema,
   GenerateAdaptationInputSchema,
   GenerateShotsInputSchema,
+  MotionStoryGenerateInputSchema,
+  MotionStoryUpdateInputSchema,
   GenerateStoryboardInputSchema,
   PartnerFeedbackInputSchema,
   PostInputSchema,
@@ -104,6 +106,15 @@ import { analyzeReference, runVideoScript, runVideoShots, suggestPersonas } from
 import { anchorImageModel, generateImage } from "./images";
 import { HEADLINE_DOCTRINE, HOOK_DOCTRINE, HOOK_STYLES, hookStyleDirective } from "../../shared/src";
 import { designPartnerReadiness } from "./readiness";
+import AdmZip from "adm-zip";
+import {
+  applyMotionEdit,
+  approvalBlocker,
+  buildMotionPieceFolder,
+  checkMotionWords,
+  pieceTextFor,
+  runMotionStory
+} from "./motionStory";
 
 export function createRouter(repo: Repository) {
   const router = express.Router();
@@ -1152,6 +1163,176 @@ export function createRouter(repo: Repository) {
       }
       const exportPkg = buildExportPackage(project);
       res.json(exportPkg);
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  // ---- Motion story: writing -> narrative -> kinetic type ----
+  // A finished piece becomes timed on-screen beats, passes a words gate
+  // (anti-slop v1.2, reading time, every line traced to the piece), and
+  // exports as a content-studio piece folder for a HyperFrames build.
+  const loadProject = async (id: string, res: Response) => {
+    const project = await repo.getVideoProject(id);
+    if (!project) res.status(404).json({ error: "Project not found" });
+    return project;
+  };
+
+  router.post("/video/motion-story", async (req, res, next) => {
+    try {
+      const input = MotionStoryGenerateInputSchema.parse(req.body);
+      const post = input.postId ? await repo.getPost(input.postId) : undefined;
+      const text = (input.text ?? post?.body ?? "").trim();
+      if (text.length < 40) {
+        res.status(400).json({ error: "Bring a finished piece of at least a few sentences" });
+        return;
+      }
+      const title = input.title?.trim() || post?.title || text.match(/^#\s+(.+)$/m)?.[1]?.trim() || "Untitled motion story";
+      const consent = input.externalAiConsent ?? false;
+      requireExternalAiConsent({ externalAiConsent: consent });
+      const { story, cost } = await runMotionStory({
+        text,
+        title,
+        voice: await repo.getVoice(),
+        targetSeconds: input.targetSeconds,
+        aspect: input.aspect,
+        sourcePostId: post?.id ?? input.postId,
+        promptBody: (await repo.getActivePromptVersion("motion-story"))?.body
+      });
+      await recordVideoGeneration("motion-story", story, cost);
+      const project = await repo.saveVideoProject({
+        title,
+        format: "explainer",
+        sourceType: "piece",
+        sourcePostId: post?.id ?? input.postId,
+        sourceText: text,
+        externalAiConsent: consent,
+        primaryOutput: "4-8 min",
+        selectedPlatforms: input.aspect === "9:16" ? ["reels", "tiktok", "shorts"] : ["youtube"],
+        currentStage: "motion-story",
+        motionStory: story,
+        cost
+      });
+      res.json(project);
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  router.post("/video/projects/:id/motion-story/generate", async (req, res, next) => {
+    try {
+      const project = await loadProject(req.params.id, res);
+      if (!project) return;
+      requireExternalAiConsent(project);
+      const input = MotionStoryGenerateInputSchema.parse(req.body ?? {});
+      const text = pieceTextFor(project);
+      if (text.length < 40) {
+        res.status(400).json({ error: "This project has no piece to tell. Add a narrative source first." });
+        return;
+      }
+      const { story, cost } = await runMotionStory({
+        text,
+        title: project.motionStory?.sourceTitle || project.title,
+        voice: await repo.getVoice(),
+        targetSeconds: input.targetSeconds,
+        aspect: input.aspect,
+        sourcePostId: project.sourcePostId,
+        promptBody: (await repo.getActivePromptVersion("motion-story"))?.body,
+        previous: project.motionStory
+      });
+      await recordVideoGeneration("motion-story", story, cost);
+      res.json(
+        await repo.saveVideoProject({
+          id: project.id,
+          motionStory: story,
+          currentStage: "motion-story",
+          cost: (project.cost ?? 0) + cost
+        })
+      );
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  router.patch("/video/projects/:id/motion-story", async (req, res, next) => {
+    try {
+      const project = await loadProject(req.params.id, res);
+      if (!project) return;
+      if (!project.motionStory) {
+        res.status(400).json({ error: "Generate a motion story first" });
+        return;
+      }
+      const edit = MotionStoryUpdateInputSchema.parse(req.body);
+      res.json(await repo.saveVideoProject({ id: project.id, motionStory: applyMotionEdit(project.motionStory, edit) }));
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  router.post("/video/projects/:id/motion-story/check", async (req, res, next) => {
+    try {
+      const project = await loadProject(req.params.id, res);
+      if (!project) return;
+      if (!project.motionStory) {
+        res.status(400).json({ error: "Generate a motion story first" });
+        return;
+      }
+      requireExternalAiConsent(project);
+      const gate = await checkMotionWords({ story: project.motionStory, pieceText: pieceTextFor(project) });
+      if (gate.cost > 0) await recordVideoGeneration("adjudicate", gate.findings, gate.cost);
+      res.json(
+        await repo.saveVideoProject({
+          id: project.id,
+          // Keep updatedAt: the gate result is fresh for exactly this version.
+          motionStory: { ...project.motionStory, wordsGate: gate, approved: false, approvedAt: undefined },
+          cost: (project.cost ?? 0) + gate.cost
+        })
+      );
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  router.post("/video/projects/:id/motion-story/approve", async (req, res, next) => {
+    try {
+      const project = await loadProject(req.params.id, res);
+      if (!project) return;
+      const blocker = approvalBlocker(project.motionStory);
+      if (blocker || !project.motionStory) {
+        res.status(409).json({ error: blocker ?? "Generate a motion story first" });
+        return;
+      }
+      res.json(
+        await repo.saveVideoProject({
+          id: project.id,
+          motionStory: { ...project.motionStory, approved: true, approvedAt: new Date().toISOString() }
+        })
+      );
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  router.get("/video/projects/:id/motion-story/export", async (req, res, next) => {
+    try {
+      const project = await loadProject(req.params.id, res);
+      if (!project) return;
+      if (!project.motionStory?.approved) {
+        res.status(409).json({ error: "Approve the story (after the words check passes) before exporting it" });
+        return;
+      }
+      const folder = buildMotionPieceFolder(project, project.motionStory);
+      if (req.query.format === "json") {
+        res.json(folder);
+        return;
+      }
+      const zip = new AdmZip();
+      for (const file of folder.files) {
+        zip.addFile(`${folder.folderName}/${file.path}`, Buffer.from(file.content, "utf8"));
+      }
+      res.setHeader("Content-Type", "application/zip");
+      res.setHeader("Content-Disposition", `attachment; filename="${folder.folderName}.zip"`);
+      res.send(zip.toBuffer());
     } catch (error) {
       next(error);
     }

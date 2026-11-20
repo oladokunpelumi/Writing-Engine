@@ -1,5 +1,6 @@
 import type {
   ActivationEventInput,
+  MotionBeat,
   BriefSeed,
   BriefInput,
   CorpusClassificationInput,
@@ -216,6 +217,49 @@ export const api = {
     }),
   exportVideoPackage: (projectId: string) =>
     request<{ markdown: string; json: VideoProject }>(`/api/video/projects/${projectId}/export`),
+
+  // Motion story: writing -> narrative -> kinetic type
+  createMotionStory: (input: {
+    text?: string;
+    title?: string;
+    postId?: string;
+    targetSeconds: 15 | 30 | 45 | 60;
+    aspect: "9:16" | "1:1" | "16:9";
+    externalAiConsent: boolean;
+  }) => request<VideoProject>("/api/video/motion-story", { method: "POST", headers: jsonHeaders, body: JSON.stringify(input) }),
+  regenerateMotionStory: (projectId: string, input: { targetSeconds: 15 | 30 | 45 | 60; aspect: "9:16" | "1:1" | "16:9" }) =>
+    request<VideoProject>(`/api/video/projects/${projectId}/motion-story/generate`, {
+      method: "POST",
+      headers: jsonHeaders,
+      body: JSON.stringify(input)
+    }),
+  updateMotionStory: (projectId: string, input: { beats: MotionBeat[]; oneThing?: string; title?: string }) =>
+    request<VideoProject>(`/api/video/projects/${projectId}/motion-story`, {
+      method: "PATCH",
+      headers: jsonHeaders,
+      body: JSON.stringify(input)
+    }),
+  checkMotionStory: (projectId: string) =>
+    request<VideoProject>(`/api/video/projects/${projectId}/motion-story/check`, { method: "POST" }),
+  approveMotionStory: (projectId: string) =>
+    request<VideoProject>(`/api/video/projects/${projectId}/motion-story/approve`, { method: "POST" }),
+  downloadMotionFolder: async (projectId: string) => {
+    const headers = new Headers();
+    if (authToken) headers.set("Authorization", `Bearer ${authToken}`);
+    const response = await fetch(`/api/video/projects/${projectId}/motion-story/export`, { headers });
+    if (!response.ok) {
+      const body = await response.json().catch(() => ({}));
+      throw new Error(body.error ?? `${response.status} ${response.statusText}`);
+    }
+    const name = response.headers.get("Content-Disposition")?.match(/filename="(.+?)"/)?.[1] ?? "motion-story.zip";
+    const url = URL.createObjectURL(await response.blob());
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = name;
+    link.click();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+    return name;
+  },
 
   videoReference: (transcript: string) =>
     request<{ reference: ReferenceBlueprint }>("/api/video/reference", { method: "POST", headers: jsonHeaders, body: JSON.stringify({ transcript }) }),

@@ -666,6 +666,19 @@ export function buildExportPackage(project: VideoProject): { markdown: string; j
     }
   }
 
+  if (project.motionStory) {
+    const story = project.motionStory;
+    mdParts.push(`## Motion Story (kinetic type, ${story.aspect}, ${story.totalSeconds.toFixed(1)}s, v${story.version})`);
+    mdParts.push(`*One thing:* ${story.oneThing}`);
+    mdParts.push(
+      `*Words gate:* ${story.wordsGate ? (story.wordsGate.pass ? "passed" : "blocking issues open") : "not run"} | *Approved:* ${story.approved ? "yes" : "no"}\n`
+    );
+    for (const beat of story.beats) {
+      mdParts.push(`- **[${beat.start.toFixed(1)}–${beat.end.toFixed(1)}s] ${beat.title}:** ${beat.lines.join(" / ")} *(out: ${beat.transitionOut})*`);
+    }
+    mdParts.push("");
+  }
+
   if (project.shots && project.shots.length > 0) {
     mdParts.push(`## Shot List & Veo 3 Prompts`);
     for (const shot of project.shots) {

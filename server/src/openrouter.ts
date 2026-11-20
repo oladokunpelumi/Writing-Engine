@@ -38,7 +38,8 @@ const modelEnv: Partial<Record<PromptStage, string>> = {
   "video-treatment": "MODEL_VIDEO_TREATMENT",
   "video-storyboard": "MODEL_VIDEO_STORYBOARD",
   "video-adaptation": "MODEL_VIDEO_ADAPTATION",
-  adjudicate: "MODEL_ADJUDICATE"
+  adjudicate: "MODEL_ADJUDICATE",
+  "motion-story": "MODEL_MOTION_STORY"
 };
 
 type ModelProfile = "cost-first" | "balanced" | "premium";
@@ -69,6 +70,7 @@ const modelProfiles: Record<ModelProfile, Partial<Record<PromptStage, string>>> 
     "video-storyboard": "google/gemini-3.1-flash-lite",
     "video-adaptation": "google/gemini-3.1-flash-lite",
     adjudicate: "google/gemini-3.1-flash-lite",
+    "motion-story": "z-ai/glm-5.2",
     image: "google/gemini-3.1-flash-lite-image"
   },
   balanced: {
@@ -96,6 +98,7 @@ const modelProfiles: Record<ModelProfile, Partial<Record<PromptStage, string>>> 
     "video-storyboard": "google/gemini-3.1-flash-lite",
     "video-adaptation": "anthropic/claude-sonnet-4.6",
     adjudicate: "z-ai/glm-5.2",
+    "motion-story": "anthropic/claude-sonnet-4.6",
     image: "google/gemini-3.1-flash-image"
   },
   premium: {
@@ -123,6 +126,7 @@ const modelProfiles: Record<ModelProfile, Partial<Record<PromptStage, string>>> 
     "video-storyboard": "google/gemini-3.1-flash-lite",
     "video-adaptation": "anthropic/claude-sonnet-4.6",
     adjudicate: "anthropic/claude-sonnet-4.6",
+    "motion-story": "anthropic/claude-sonnet-4.6",
     image: "google/gemini-3-pro-image"
   }
 };

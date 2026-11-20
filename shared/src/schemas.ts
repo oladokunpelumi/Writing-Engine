@@ -71,7 +71,8 @@ export const PromptStageSchema = z.enum([
   "video-treatment",
   "video-storyboard",
   "video-adaptation",
-  "adjudicate"
+  "adjudicate",
+  "motion-story"
 ]);
 
 export const PostSchema = z.object({
@@ -1102,13 +1103,118 @@ export const VideoAdaptationSchema = z.object({
   createdAt: isoDate
 });
 
+// ---- Motion story (writing -> narrative -> kinetic type) ----
+// A finished piece becomes timed beats a motion-graphics build can read
+// directly. Each beat IS a ProductionScene (so the rest of Video Studio V2 can
+// treat it as one), plus the numbers a renderer needs: exact seconds, the
+// on-screen lines card by card, the seam out, and the sentence it came from.
+
+export const MotionBeatRoleSchema = z.enum(["hook", "turn", "proof", "payoff", "cta"]);
+
+/** The seam catalogue from cut-the-curve / motion-doctrine, plus a plain cut and a hold. */
+export const MotionTransitionSchema = z.enum([
+  "cut",
+  "hold",
+  "zoom-through",
+  "inverse-zoom",
+  "cut-the-curve",
+  "waterfall",
+  "rack-focus"
+]);
+
+export const MotionBeatSchema = ProductionSceneSchema.extend({
+  role: MotionBeatRoleSchema,
+  start: z.number().min(0),
+  end: z.number().positive(),
+  /** On-screen text, one entry per line, in reading order. */
+  lines: z.array(z.string()).default([]),
+  /** Words inside `lines` the motion should land on (scale, colour, beat hit). */
+  emphasis: z.array(z.string()).default([]),
+  transitionOut: MotionTransitionSchema.default("cut"),
+  /** The sentence(s) of the piece this beat says. Must appear in the piece verbatim. */
+  sourceQuote: z.string().default("")
+});
+
+export const MotionGateBeatSchema = z.object({
+  sceneId: z.string(),
+  words: z.number(),
+  holdSeconds: z.number(),
+  readingSeconds: z.number(),
+  readable: z.boolean(),
+  traced: z.boolean(),
+  untracedFigures: z.array(z.string()).default([])
+});
+
+export const MotionGateIssueSchema = z.object({
+  sceneId: z.string(),
+  kind: z.enum(["reading-time", "density", "untraced-quote", "invented-figure", "slop", "hook-late"]),
+  blocking: z.boolean(),
+  message: z.string(),
+  direction: z.string().default("")
+});
+
+export const MotionWordsGateSchema = z.object({
+  pass: z.boolean(),
+  checkedAt: isoDate,
+  /** Hash of the beats and one thing the gate ran on; approval needs it to match. */
+  storyHash: z.string().default(""),
+  beats: z.array(MotionGateBeatSchema).default([]),
+  issues: z.array(MotionGateIssueSchema).default([]),
+  findings: z.array(AdjudicatedFindingSchema).default([]),
+  provider: z.enum(["mock", "openrouter"]).default("mock"),
+  cost: z.number().default(0)
+});
+
+export const MotionStorySchema = z.object({
+  id: z.string(),
+  version: z.number().int().min(1).default(1),
+  lane: z.literal("kinetic-type").default("kinetic-type"),
+  aspect: z.enum(["9:16", "1:1", "16:9"]).default("9:16"),
+  fps: z.number().int().default(30),
+  soundMode: z.enum(["silent-first", "music", "voiceover"]).default("silent-first"),
+  title: z.string().default(""),
+  /** The one controlling idea (ONE_THING_DOCTRINE). Every beat serves it. */
+  oneThing: z.string().default(""),
+  /** Ranked hook options; beat 0 shows hookCandidates[0] unless the writer swaps it. */
+  hookCandidates: z
+    .array(z.object({ text: z.string(), score: z.number(), reasons: z.array(z.string()).default([]) }))
+    .default([]),
+  beats: z.array(MotionBeatSchema).default([]),
+  totalSeconds: z.number().default(30),
+  sourcePostId: z.string().optional(),
+  sourceTitle: z.string().default(""),
+  wordsGate: MotionWordsGateSchema.optional(),
+  approved: z.boolean().default(false),
+  approvedAt: isoDate.optional(),
+  provider: z.enum(["mock", "openrouter"]).default("mock"),
+  cost: z.number().default(0),
+  createdAt: isoDate,
+  updatedAt: isoDate
+});
+
+export const MotionStoryGenerateInputSchema = z.object({
+  text: z.string().min(40).max(60_000).optional(),
+  title: z.string().max(300).optional(),
+  postId: z.string().optional(),
+  targetSeconds: z.union([z.literal(15), z.literal(30), z.literal(45), z.literal(60)]).default(30),
+  aspect: z.enum(["9:16", "1:1", "16:9"]).default("9:16"),
+  externalAiConsent: z.boolean().optional()
+});
+
+export const MotionStoryUpdateInputSchema = z.object({
+  beats: z.array(MotionBeatSchema).min(1).max(24),
+  oneThing: z.string().max(400).optional(),
+  title: z.string().max(300).optional()
+});
+
 export const VideoProjectStageSchema = z.enum([
   "sources",
   "treatments",
   "master-script",
   "adaptations",
   "shots",
-  "export"
+  "export",
+  "motion-story"
 ]);
 
 export const VisualBibleSchema = z.object({
@@ -1148,6 +1254,7 @@ export const VideoProjectSchema = z.object({
   masterScript: ProductionScriptSchema.optional(),
   scriptVersions: z.array(ProductionScriptSchema).default([]),
   adaptations: z.array(VideoAdaptationSchema).default([]),
+  motionStory: MotionStorySchema.optional(),
   shots: z.array(VideoShotSchema).default([]),
   storyboards: z
     .array(
@@ -1279,6 +1386,13 @@ export type VideoTreatment = z.infer<typeof VideoTreatmentSchema>;
 export type ProductionScene = z.infer<typeof ProductionSceneSchema>;
 export type ProductionScript = z.infer<typeof ProductionScriptSchema>;
 export type VideoAdaptation = z.infer<typeof VideoAdaptationSchema>;
+export type MotionBeatRole = z.infer<typeof MotionBeatRoleSchema>;
+export type MotionTransition = z.infer<typeof MotionTransitionSchema>;
+export type MotionBeat = z.infer<typeof MotionBeatSchema>;
+export type MotionStory = z.infer<typeof MotionStorySchema>;
+export type MotionWordsGate = z.infer<typeof MotionWordsGateSchema>;
+export type MotionGateIssue = z.infer<typeof MotionGateIssueSchema>;
+export type MotionStoryGenerateInput = z.infer<typeof MotionStoryGenerateInputSchema>;
 export type VideoProjectStage = z.infer<typeof VideoProjectStageSchema>;
 export type VisualBible = z.infer<typeof VisualBibleSchema>;
 

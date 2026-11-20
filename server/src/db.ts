@@ -496,6 +496,7 @@ async function migrate(db: AppDatabase) {
     ALTER TABLE video_projects ADD COLUMN IF NOT EXISTS script_versions text NOT NULL DEFAULT '[]';
     ALTER TABLE video_projects ADD COLUMN IF NOT EXISTS adaptations text NOT NULL DEFAULT '[]';
     ALTER TABLE video_projects ADD COLUMN IF NOT EXISTS storyboards text NOT NULL DEFAULT '[]';
+    ALTER TABLE video_projects ADD COLUMN IF NOT EXISTS motion_story text;
 
     CREATE TABLE IF NOT EXISTS video_sources (
       id text PRIMARY KEY,

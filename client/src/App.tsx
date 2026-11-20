@@ -5,6 +5,7 @@ import {
   ChevronDown,
   ChevronRight,
   Clapperboard,
+  Film,
   Clipboard,
   Copy,
   Database,
@@ -91,6 +92,7 @@ import { ScriptEditor } from "./components/video/ScriptEditor";
 import { AdaptationsView } from "./components/video/AdaptationsView";
 import { StoryboardGallery } from "./components/video/StoryboardGallery";
 import { ExportPackageView } from "./components/video/ExportPackageView";
+import { MotionStoryStage } from "./components/video/MotionStoryStage";
 import { api, getToken, setToken } from "./api";
 import { brandCopy, polishMoves, type MoveKey } from "./brand";
 
@@ -166,6 +168,7 @@ export default function App() {
   const [gate, setGate] = useState<{ report: AdjudicationReport; verdict: PublishVerdict } | null>(null);
   const [gateRejected, setGateRejected] = useState<Array<{ pattern: string; evidence: string }>>([]);
   const [videoSeedText, setVideoSeedText] = useState("");
+  const [motionSeed, setMotionSeed] = useState<{ text: string; title?: string; postId?: string } | null>(null);
   const [retrieved, setRetrieved] = useState<RetrievedPost[]>([]);
   const [citations, setCitations] = useState<CitationFlag[]>([]);
   const [qualityReport, setQualityReport] = useState<QualityReport | null>(null);
@@ -527,6 +530,10 @@ export default function App() {
               })}
               onRepurpose={() => runStep("Repurposing", () => api.repurpose(finalForPackage), setRepurpose)}
               onMakeVideo={() => { setVideoSeedText(finalForPackage); setTab("video"); }}
+              onMakeMotionStory={() => {
+                setMotionSeed({ text: finalForPackage, title: finalForPackage.match(/^#\s+(.+)$/m)?.[1]?.trim() || brief.topic || undefined, postId: draftPostId });
+                setTab("video");
+              }}
               desireReport={desireReport}
               onCheckDesire={() => runStep("Checking desire", () => api.desireScore(finalForPackage), setDesireReport)}
               onDesirePass={() => runStep("Desire pass", () => api.desirePass(finalForPackage, draftPostId), async (res) => {
@@ -697,7 +704,7 @@ export default function App() {
             />
           )}
           {tab === "grid" && <GridView runStep={runStep} busy={busy} refresh={refresh} />}
-          {tab === "video" && <VideoStudioView runStep={runStep} busy={busy} posts={posts} seedText={videoSeedText} />}
+          {tab === "video" && <VideoStudioView runStep={runStep} busy={busy} posts={posts} seedText={videoSeedText} motionSeed={motionSeed} onMotionSeedUsed={() => setMotionSeed(null)} />}
           {tab === "experiments" && <ExperimentsView runStep={runStep} busy={busy} refresh={refresh} />}
           {tab === "graph" && <GraphView runStep={runStep} busy={busy} />}
           {tab === "history" && <HistoryView generations={generations} />}
@@ -757,6 +764,7 @@ function ComposeView(props: {
   onUseHeadline: (title: string) => void;
   onRepurpose: () => void;
   onMakeVideo: () => void;
+  onMakeMotionStory: () => void;
   desireReport: DesireReport | null;
   onCheckDesire: () => void;
   onDesirePass: () => void;
@@ -1050,6 +1058,7 @@ function ComposeView(props: {
               <ActionButton icon={<Image size={16} />} disabled={!working || Boolean(props.busy)} onClick={props.onPackage}>SEO + cover</ActionButton>
               <ActionButton icon={<Share2 size={16} />} disabled={!working || Boolean(props.busy)} onClick={props.onRepurpose}>Repurpose</ActionButton>
               <ActionButton icon={<Clapperboard size={16} />} disabled={!working || Boolean(props.busy)} onClick={props.onMakeVideo}>Make a UGC video</ActionButton>
+              <ActionButton icon={<Film size={16} />} disabled={!working || Boolean(props.busy)} onClick={props.onMakeMotionStory}>Make a motion story</ActionButton>
               <a className="btn" href="/api/export/library"><Download size={16} /> Library MD</a>
             </div>
             {props.draftPostId ? <p className="mt-3 text-xs text-tide">Auto-saved as a draft in your Library.</p> : null}
@@ -2750,12 +2759,16 @@ function VideoStudioView({
   runStep,
   busy,
   posts,
-  seedText
+  seedText,
+  motionSeed,
+  onMotionSeedUsed
 }: {
   runStep: <T,>(label: string, action: () => Promise<T>, after: (value: T) => void) => Promise<void>;
   busy: string;
   posts: Post[];
   seedText: string;
+  motionSeed: { text: string; title?: string; postId?: string } | null;
+  onMotionSeedUsed: () => void;
 }) {
   const [projects, setProjects] = useState<VideoProject[]>([]);
   const [currentProject, setCurrentProject] = useState<VideoProject | null>(null);
@@ -3000,6 +3013,43 @@ function VideoStudioView({
     );
   };
 
+  // ---- Motion story ----
+  const [motionLength, setMotionLength] = useState<15 | 30 | 45 | 60>(30);
+  const [motionAspect, setMotionAspect] = useState<"9:16" | "1:1" | "16:9">("9:16");
+  const [motionConsent, setMotionConsent] = useState(true);
+
+  const handleCreateMotionStory = async () => {
+    if (!motionSeed) return;
+    await runStep(
+      "Telling the piece as a story",
+      () =>
+        api.createMotionStory({
+          text: motionSeed.text,
+          title: motionSeed.title,
+          postId: motionSeed.postId,
+          targetSeconds: motionLength,
+          aspect: motionAspect,
+          externalAiConsent: motionConsent
+        }),
+      (created) => {
+        setProjects((current) => [created, ...current]);
+        setCurrentProject(created);
+        setActiveStage("motion-story");
+        onMotionSeedUsed();
+      }
+    );
+  };
+
+  const updateProject = (updated: VideoProject) => {
+    setCurrentProject(updated);
+    setProjects((current) => current.map((project) => (project.id === updated.id ? updated : project)));
+  };
+
+  const handleRegenerateMotionStory = async (targetSeconds: 15 | 30 | 45 | 60, aspect: "9:16" | "1:1" | "16:9") => {
+    if (!currentProject) return;
+    await runStep("Retelling the story", () => api.regenerateMotionStory(currentProject.id, { targetSeconds, aspect }), updateProject);
+  };
+
   const handleLoadExport = async () => {
     if (!currentProject) return;
     await runStep(
@@ -3064,6 +3114,34 @@ function VideoStudioView({
         />
       )}
 
+      {motionSeed ? (
+        <div className="rounded-2xl border border-indigo-200 bg-indigo-50/50 p-5 grid gap-3">
+          <div>
+            <p className="text-xs font-bold uppercase text-indigo-700">New motion story</p>
+            <h2 className="font-display text-lg font-bold text-slate-900">{motionSeed.title || "Your finished piece"}</h2>
+            <p className="text-xs text-slate-500">
+              Kinetic type, text only, sound off first. The story uses the piece's own sentences; nothing is added.
+            </p>
+          </div>
+          <div className="flex flex-wrap items-center gap-3 text-xs">
+            <select className="input w-auto py-1 text-xs" value={motionLength} onChange={(event) => setMotionLength(Number(event.target.value) as 15 | 30 | 45 | 60)}>
+              {[15, 30, 45, 60].map((value) => <option key={value} value={value}>{value}s</option>)}
+            </select>
+            <select className="input w-auto py-1 text-xs" value={motionAspect} onChange={(event) => setMotionAspect(event.target.value as "9:16" | "1:1" | "16:9")}>
+              {["9:16", "1:1", "16:9"].map((value) => <option key={value} value={value}>{value}</option>)}
+            </select>
+            <label className="flex items-center gap-1.5 text-slate-600">
+              <input type="checkbox" checked={motionConsent} onChange={(event) => setMotionConsent(event.target.checked)} />
+              Send this piece to the AI model to draft the story
+            </label>
+          </div>
+          <div className="flex gap-2">
+            <button className="btn btn-primary text-xs" disabled={Boolean(busy)} onClick={handleCreateMotionStory}>Tell it as a story</button>
+            <button className="btn text-xs" onClick={onMotionSeedUsed}>Not now</button>
+          </div>
+        </div>
+      ) : null}
+
       {/* Active Workspace Stepper Navigation */}
       {currentProject ? (
         <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-2xs grid gap-6">
@@ -3074,7 +3152,12 @@ function VideoStudioView({
               { id: "master-script", label: "3. Master Script", unlocked: Boolean(currentProject.selectedTreatment) },
               { id: "adaptations", label: "4. Adaptations", unlocked: Boolean(currentProject.masterScript?.approved) },
               { id: "shots", label: "5. Shots & Storyboard", unlocked: Boolean(currentProject.masterScript?.approved) },
-              { id: "export", label: "6. Export Package", unlocked: Boolean(currentProject.masterScript?.approved) }
+              { id: "export", label: "6. Export Package", unlocked: Boolean(currentProject.masterScript?.approved) },
+              {
+                id: "motion-story",
+                label: `Motion story${currentProject.motionStory?.approved ? " ✓" : ""}`,
+                unlocked: Boolean(currentProject.motionStory || currentProject.sourceText || currentProject.sources?.length)
+              }
             ].map((st) => (
               <button
                 key={st.id}
@@ -3171,6 +3254,20 @@ function VideoStudioView({
               project={currentProject}
               exportPkg={exportPkg}
               onBuildExport={handleLoadExport}
+            />
+          )}
+
+          {activeStage === "motion-story" && (
+            <MotionStoryStage
+              project={currentProject}
+              busy={busy}
+              onRegenerate={handleRegenerateMotionStory}
+              onSave={(beats, oneThing) =>
+                runStep("Saving story edits", () => api.updateMotionStory(currentProject.id, { beats, oneThing }), updateProject)
+              }
+              onCheck={() => runStep("Checking the words", () => api.checkMotionStory(currentProject.id), updateProject)}
+              onApprove={() => runStep("Approving the story", () => api.approveMotionStory(currentProject.id), updateProject)}
+              onDownload={() => runStep("Building the piece folder", () => api.downloadMotionFolder(currentProject.id), () => undefined)}
             />
           )}
         </div>
