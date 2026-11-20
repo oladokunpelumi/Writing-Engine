@@ -33,13 +33,30 @@ describe("prompt studio and quality management", () => {
     expect(voice.constraints.join(" ")).toContain("sensory pressure");
   });
 
-  it("scores and rewrites slop markers", () => {
+  it("scores structural markers and makes only meaning-preserving cuts (anti-slop v1.2)", () => {
     const text = "In today's fast-paced world, we leverage robust systems that are not just useful but transformative.";
     const report = evaluateQuality(text);
     expect(report.verdict).not.toBe("Pass");
+    expect(report.structuralViolations.length).toBeGreaterThan(0);
+    // Vocabulary is a cue, never a cause: reported as minor, and it costs no trust.
     expect(report.vocabularyViolations.length).toBeGreaterThan(0);
+    expect(report.vocabularyViolations.every((v) => v.severity === "minor")).toBe(true);
+    expect(report.scores.trust).toBe(10);
     const rewrite = rewriteSlop(text);
-    expect(rewrite).not.toContain("leverage");
     expect(rewrite).not.toContain("In today's fast-paced world");
+    expect(rewrite.startsWith("We ")).toBe(true);
+    // No cosmetic word swaps, and staged contrast is left for adjudicated revision.
+    expect(rewrite).toContain("leverage");
+    expect(rewrite).toContain("not just useful but transformative");
+  });
+
+  it("never auto-rejects, and charges trust only for missing support", () => {
+    const wall = Array.from({ length: 12 }, () => "In today's fast-paced world, it is important to note that studies show this is not just big but huge.").join(" ");
+    const report = evaluateQuality(wall);
+    expect(report.verdict).not.toBe("Reject");
+    expect(report.structuralViolations.some((v) => v.label === "Unnamed authority")).toBe(true);
+    expect(report.scores.trust).toBeLessThan(10);
+    const clean = evaluateQuality("Our robust checkout cut refunds by 12% in March, per the Stripe dashboard.");
+    expect(clean.scores.trust).toBe(10);
   });
 });

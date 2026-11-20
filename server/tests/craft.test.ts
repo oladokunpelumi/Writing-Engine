@@ -31,6 +31,18 @@ describe("headlineScore (shared attention engine)", () => {
     expect(slop.score).toBeLessThan(5);
   });
 
+  it("judges the mechanism, not the vocabulary (anti-slop v1.2)", () => {
+    // A portable line costs points even with no listed word in it.
+    const portable = headlineScore("The future of work is here");
+    expect(portable.reasons.join(" ")).toMatch(/portable/);
+    // A listed word on an anchored, specific line costs nothing.
+    const anchored = headlineScore("Why a robust Stripe retry rule saved us $40k in March");
+    expect(anchored.reasons.join(" ")).not.toMatch(/portable|filler/);
+    expect(anchored.score).toBeGreaterThan(portable.score);
+    // Title Case is not specificity.
+    expect(headlineScore("Unlocking Tomorrow's Potential").reasons).not.toContain("something specific/named");
+  });
+
   it("strips a leading # and surrounding quotes before scoring", () => {
     const r = headlineScore('# "3 mistakes that cost you readers"');
     expect(r.reasons.join(" ")).toMatch(/number/);

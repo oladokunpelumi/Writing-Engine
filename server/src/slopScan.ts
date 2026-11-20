@@ -13,6 +13,8 @@
 
 import {
   ABSTRACTION_TOKENS,
+  PRIMARY_CAUSE_ORDER,
+  SLOP_CODE_BY_BUCKET,
   STOCK_FORMULAS,
   containsAny,
   guardPhrase,
@@ -21,7 +23,9 @@ import {
   hedgeCount,
   isAdjectival,
   splitTriad,
-  type GuardHit
+  type GuardHit,
+  type SlopBucket,
+  type SlopCode
 } from "../../shared/src";
 import { normalizePosition, registerFor, type ContentFormat, type SurfacePosition } from "../../shared/src";
 
@@ -36,7 +40,13 @@ export interface PhraseScan {
   phrase: string;
   position: SurfacePosition;
   verdict: "slop" | "not-slop";
-  bucket?: 1 | 2 | 3 | 4;
+  bucket?: SlopBucket;
+  /** v1.2 letter for the primary cause: F / V / W / R. */
+  primaryCode?: SlopCode;
+  /** Other codes the phrase also tripped. Recorded, but they don't drive the verdict. */
+  secondaryCodes?: SlopCode[];
+  /** Strength of the primary evidence: 0 specific mechanism, 1 vocabulary cue, 2 generic. */
+  evidenceTier?: 0 | 1 | 2;
   code?: string;
   mechanism?: string;
   /** Why the scanner landed where it did — the evidence, not a restatement. */
@@ -44,6 +54,25 @@ export interface PhraseScan {
   suppressedBy?: GuardHit;
   /** Borderline items are the ones worth spending an adjudication call on. */
   confidence: "clear" | "borderline";
+}
+
+interface DetectorHit {
+  bucket: SlopBucket;
+  code: string;
+  mechanism: string;
+  why: string;
+  /**
+   * Evidence strength, used before the V > W > F > R order:
+   * 0 = a specific mechanism (a stock formula, an unnamed authority, a passive
+   *     hiding its actor, stacked hedges);
+   * 1 = a vocabulary cue (counting listed abstract words) — v1.2 treats
+   *     vocabulary as a cue, never a cause on its own;
+   * 2 = a generic "names nothing concrete" signal (portability, a verbless noun
+   *     phrase), which rides along with almost every canned phrase.
+   * v1.2: record a secondary code only when it causes separate, evidenced harm,
+   * so only tier-0 hits count as secondary codes.
+   */
+  tier: 0 | 1 | 2;
 }
 
 const NEGATIVE_PARALLELISM =
@@ -112,12 +141,11 @@ function isEmptyLabelBullet(phrase: string): boolean {
  * Scan one phrase. Guards run before any flag, so a construction that merely
  * looks like a tell is suppressed with the catalogue entry that cleared it.
  */
-export function scanPhrase(input: PhraseInput): PhraseScan {
+export function scanPhrase(input: PhraseInput, order: SlopBucket[] = PRIMARY_CAUSE_ORDER): PhraseScan {
   const phrase = normalizeTypography(input.phrase ?? "");
   const position = normalizePosition(input.position ?? "body");
   const format = input.format ?? "essay";
   const register = registerFor(position, format);
-  const signals: string[] = [];
 
   if (!phrase) {
     return { phrase, position, verdict: "not-slop", signals: ["empty"], confidence: "clear" };
@@ -136,92 +164,106 @@ export function scanPhrase(input: PhraseInput): PhraseScan {
     };
   }
 
-  const flag = (bucket: 1 | 2 | 3 | 4, code: string, mechanism: string, why: string, confidence: "clear" | "borderline" = "clear"): PhraseScan => ({
-    phrase,
-    position,
-    verdict: "slop",
-    bucket,
-    code,
-    mechanism,
-    signals: [...signals, why],
-    confidence
-  });
+  // Every detector runs; the primary cause is chosen afterwards by the v1.2
+  // order. A phrase is a candidate if ANY detector fires, so verdicts are the
+  // same as a first-match scan — only which code leads can differ.
+  const hits: DetectorHit[] = [];
+  const hit = (bucket: SlopBucket, code: string, mechanism: string, why: string, tier: 0 | 1 | 2 = 0) =>
+    hits.push({ bucket, code, mechanism, why, tier });
 
-  // --- Gate 3 / bucket 1: fixed formulas and manufactured cadence ---
-  for (const formula of STOCK_FORMULAS) {
-    if (formula.pattern.test(phrase)) {
-      return flag(formula.bucket, formula.code, formula.mechanism, `matches a stock formula (${formula.mechanism})`);
-    }
-  }
+  // --- Gate 3 / bucket 1 (F): fixed formulas and manufactured cadence ---
+  const formula = STOCK_FORMULAS.find((candidate) => candidate.pattern.test(phrase));
+  if (formula) hit(formula.bucket, formula.code, formula.mechanism, `matches a stock formula (${formula.mechanism})`);
 
   if (NEGATIVE_PARALLELISM.test(phrase)) {
-    return flag(1, "S1.2", "negative parallelism", "denies a modest claim to inflate a grander one");
+    hit(1, "S1.2", "negative parallelism", "denies a modest claim to inflate a grander one");
   }
-
   if (isEmptyLabelBullet(phrase)) {
-    return flag(1, "S1.13", "mechanical label bullet", "the label adds nothing and the value names no size");
+    hit(1, "S1.13", "mechanical label bullet", "the label adds nothing and the value names no size");
   }
-
   if (isAdjectiveTriad(phrase) && !hasConcreteAnchor(phrase)) {
-    return flag(1, "S1.5", "rhetorical triad", "three overlapping adjectives with no referent");
+    hit(1, "S1.5", "rhetorical triad", "three overlapping adjectives with no referent");
   }
-
   if (register.proseStandards && isSloganRun(phrase)) {
-    return flag(1, "S1.4", "slogan fragment", "clipped declaratives carrying cadence rather than content");
+    hit(1, "S1.4", "slogan fragment", "clipped declaratives carrying cadence rather than content");
   }
 
-  // --- Gate 5 / bucket 3: wordiness, stacked hedging, jargon ---
+  // --- Gate 5 / bucket 3 (W): wordiness, stacked hedging, jargon ---
   if (hedgeCount(phrase) >= 2) {
-    return flag(3, "S3.5", "stacked hedging", "multiple uncertainty markers on a single claim");
+    hit(3, "S3.5", "stacked hedging", "multiple uncertainty markers on a single claim");
   }
-
   if (NOMINALISATION_CHAIN.test(phrase) && !hasConcreteAnchor(phrase)) {
-    return flag(3, "S3.1", "nominalisation", "verbs hidden inside nouns; no actor performs anything");
+    hit(3, "S3.1", "nominalisation", "verbs hidden inside nouns; no actor performs anything");
   }
-
   const abstractionHits = ABSTRACTION_TOKENS.filter((token) =>
     new RegExp(`\\b${token.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b`, "i").test(phrase)
   );
   if (abstractionHits.length >= 3 && !hasConcreteAnchor(phrase)) {
-    return flag(3, "S3.7", "unexplained jargon", `abstraction stacked ${abstractionHits.length} deep with nothing concrete`);
+    hit(3, "S3.7", "unexplained jargon", `abstraction stacked ${abstractionHits.length} deep with nothing concrete`, 1);
   }
 
-  // --- Gate 1 / bucket 2: carries nothing a reader could check ---
+  // --- Gate 1 / bucket 2 (V): carries nothing a reader could check ---
   if (ACTOR_HIDING_PASSIVE.test(phrase) && !hasNamedActor(phrase) && !hasConcreteAnchor(phrase)) {
-    return flag(2, "S2.1", "actor-hiding passive", "no one performs the action and nothing is recoverable");
+    hit(2, "S2.1", "actor-hiding passive", "no one performs the action and nothing is recoverable");
   }
-
   // Catalogue A10 — an ATTRIBUTION with no author, date, or sample. Scoped to
   // attributive language on purpose: a footnote that states a measurement rule
   // ("Losses are measured net of recoveries") or a real limit is carrying
   // content under Gate 1, and flagging it is the false positive A10 warns about.
   if (ATTRIBUTION.test(phrase) && !hasConcreteAnchor(phrase)) {
-    return flag(2, "S2.5", "unnamed authority", "attributes the claim to a source it never names");
+    hit(2, "S2.5", "unnamed authority", "attributes the claim to a source it never names");
   }
-
   if (portsUnedited(phrase)) {
-    return flag(2, "S2.1", "empty abstraction", "ports to an unrelated subject unedited; names no actor, figure, or change");
+    hit(2, "S2.1", "empty abstraction", "ports to an unrelated subject unedited; names no actor, figure, or change", 2);
   }
-
   // A quantifier where a figure belongs — especially when the specific number
   // is already on the slide one line up.
   if (VAGUE_QUANTIFIER.test(phrase) && !hasConcreteAnchor(phrase)) {
-    return flag(2, "S2.1", "vague quantifier", "names a share without a figure a reader could check");
+    hit(2, "S2.1", "vague quantifier", "names a share without a figure a reader could check");
   }
-
   // A verbless abstract noun phrase in a prose surface makes no claim at all.
   const hasVerb = /\b(is|are|was|were|has|have|had|will|can|does|do|rose|fell|grew|adds|drives|names|sets|shows|means|must|should)\b|\w+(s|ed|ing)\b/i.test(phrase);
   if (register.proseStandards && !register.fragmentsExpected && !hasVerb && !hasConcreteAnchor(phrase)) {
-    return flag(2, "S2.1", "empty abstraction", "a noun phrase presented as a claim; nothing is asserted");
+    hit(2, "S2.1", "empty abstraction", "a noun phrase presented as a claim; nothing is asserted", 2);
   }
 
   // --- The genuine coin-flip resolves to not-slop. ---
+  if (hits.length === 0) {
+    return {
+      phrase,
+      position,
+      verdict: "not-slop",
+      signals: ["survived every gate"],
+      confidence: hasConcreteAnchor(phrase) ? "clear" : "borderline"
+    };
+  }
+
+  // Evidence tier first (specific > vocabulary cue > generic), then the v1.2
+  // order (V > W > F > R) inside a tier. Sort is stable: on a tie, the detector
+  // that ran first wins.
+  const rank = (h: DetectorHit) => {
+    const index = order.indexOf(h.bucket);
+    return h.tier * (order.length + 1) + (index === -1 ? order.length : index);
+  };
+  const primary = [...hits].sort((a, b) => rank(a) - rank(b))[0];
+  // Secondary codes: only tier-0 hits in another bucket count as separate harm.
+  const secondaryCodes = [
+    ...new Set(hits.filter((h) => h.tier === 0 && h.bucket !== primary.bucket).map((h) => SLOP_CODE_BY_BUCKET[h.bucket]))
+  ];
+
   return {
     phrase,
     position,
-    verdict: "not-slop",
-    signals: signals.length ? signals : ["survived every gate"],
-    confidence: hasConcreteAnchor(phrase) ? "clear" : "borderline"
+    verdict: "slop",
+    bucket: primary.bucket,
+    primaryCode: SLOP_CODE_BY_BUCKET[primary.bucket],
+    secondaryCodes: secondaryCodes.length ? secondaryCodes : undefined,
+    evidenceTier: primary.tier,
+    code: primary.code,
+    mechanism: primary.mechanism,
+    // Primary cause's evidence first — adjudicate.ts reads signals[0] as the deciding gate.
+    signals: [primary.why, ...hits.filter((h) => h !== primary).map((h) => h.why)],
+    confidence: "clear"
   };
 }
 

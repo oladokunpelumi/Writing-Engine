@@ -11,8 +11,15 @@
 // finding tells the writer what to do without writing the sentence for them.
 
 import type { AdjudicatedFinding, AdjudicationReport, ContentFormat, LocatedStrength, SurfacePosition } from "../../shared/src";
+import { SLOP_CODE_BY_BUCKET, type SlopBucket } from "../../shared/src";
 import { aiProvider, modelFor, parseJson, rawChat } from "./openrouter";
 import { scanPhrase, type PhraseScan } from "./slopScan";
+
+/** Form-only signals: v1.2's "mostly a style preference" — low confidence unless confirmed. */
+const FORM_ONLY_CODES = new Set(["S1.4", "S1.5", "S1.7"]);
+
+/** Surfaces a reader meets first or last, or that carry the claim. */
+const MATERIAL_POSITIONS = new Set<SurfacePosition>(["title", "heading", "closing", "callout", "cta"]);
 
 export interface PieceUnit {
   text: string;
@@ -100,8 +107,32 @@ interface Candidate {
   scan: PhraseScan;
 }
 
+/**
+ * v1.2 confidence: high = mechanism visibly supported (a model-confirmed flag,
+ * or a specific scanner mechanism — drill-pack precision on these is 100%);
+ * medium = plausible, another reading reasonable; low = mostly style.
+ */
+function confidenceFor(scan: PhraseScan, source: "scanner" | "adjudicator"): AdjudicatedFinding["confidence"] {
+  if (source === "adjudicator") return "high";
+  if (scan.code && FORM_ONLY_CODES.has(scan.code)) return "low";
+  return scan.evidenceTier === 0 ? "high" : "medium";
+}
+
+/**
+ * v1.2 severity: major = support missing for a material claim, or meaning lost
+ * where the reader meets the piece; moderate = reduces clarity or trust;
+ * minor = local awkwardness, meaning still clear. Frequency raises it later.
+ */
+function severityFor(code: string | undefined, primaryCode: AdjudicatedFinding["primaryCode"], position: SurfacePosition): AdjudicatedFinding["severity"] {
+  if (code === "S2.5") return "major"; // unnamed authority: a claim with its support missing
+  if (primaryCode === "V") return MATERIAL_POSITIONS.has(position) ? "major" : "moderate";
+  if (MATERIAL_POSITIONS.has(position)) return "moderate"; // canned or padded where the reader meets it
+  return "minor";
+}
+
 function toFinding(candidate: Candidate, source: "scanner" | "adjudicator"): AdjudicatedFinding {
   const bucket = candidate.scan.bucket;
+  const primaryCode = bucket ? SLOP_CODE_BY_BUCKET[bucket] : undefined;
   return {
     location: candidate.unit.location,
     quote: candidate.unit.text.slice(0, 160),
@@ -111,8 +142,35 @@ function toFinding(candidate: Candidate, source: "scanner" | "adjudicator"): Adj
     effect: bucket ? BUCKET_EFFECTS[bucket] ?? "" : "",
     direction: bucket ? BUCKET_DIRECTIONS[bucket] ?? "" : "",
     gate: candidate.scan.signals[0],
-    source
+    source,
+    primaryCode,
+    secondaryCodes: candidate.scan.secondaryCodes ?? [],
+    severity: severityFor(candidate.scan.code, primaryCode, candidate.unit.position),
+    confidence: confidenceFor(candidate.scan, source),
+    frequency: "isolated"
   };
+}
+
+/**
+ * v1.2 frequency: the same sub-pattern once, twice, or three+ times across the
+ * piece. A repeated problem is at least moderate — recurrence is itself harm.
+ */
+function withFrequency(findings: AdjudicatedFinding[]): AdjudicatedFinding[] {
+  // Keyed on code AND mechanism: S2.1 alone spans several distinct sub-patterns.
+  const keyOf = (finding: AdjudicatedFinding) => `${finding.code ?? ""}|${finding.mechanism}`;
+  const counts = new Map<string, number>();
+  for (const finding of findings) counts.set(keyOf(finding), (counts.get(keyOf(finding)) ?? 0) + 1);
+  return findings.map((finding) => {
+    const count = counts.get(keyOf(finding)) ?? 1;
+    const frequency: AdjudicatedFinding["frequency"] = count >= 3 ? "pervasive" : count === 2 ? "repeated" : "isolated";
+    const severity = frequency !== "isolated" && finding.severity === "minor" ? "moderate" : finding.severity;
+    return { ...finding, frequency, severity };
+  });
+}
+
+/** Findings allowed to move the verdict. v1.2: low-confidence signals must not drive it. */
+export function drivingFindings(findings: AdjudicatedFinding[]): AdjudicatedFinding[] {
+  return findings.filter((finding) => finding.confidence !== "low");
 }
 
 /** Credit one located strength, at every score. (Field kit §10) */
@@ -138,7 +196,9 @@ const ADJUDICATION_SYSTEM = [
   "Gate 5 Substitution: would a simpler word carry the same meaning to this audience? A shared term of art is not jargon.",
   "Tie-break: write the plainer version. If it says the same thing in fewer words, the original was slop. If it loses a qualification, party, condition, or degree, it was not.",
   "A genuine coin-flip resolves to NOT slop. The burden of proof sits on the flag; over-flagging costs the same as missing one.",
-  "Buckets: 1 formulaic/slogan-like, 2 vague/inflated/unsupported, 3 wordy/jargon-filled/indirect, 4 unnecessary framing/repetition/structure.",
+  "Buckets (anti-slop v1.2 codes): 1 = F formulaic/slogan-like, 2 = V vague/inflated/unsupported, 3 = W wordy/jargon-filled/indirect, 4 = R unnecessary framing/repetition/structure.",
+  "When causes overlap, the primary is the ROOT cause in this order: V (meaning, actor, support or causal link missing) before W (meaning recoverable but buried) before F (meaning clear but canned) before R (point delayed or duplicated). A specific mechanism outranks a generic 'names nothing concrete' signal.",
+  "A flagged word or punctuation mark alone is never a finding. A finding needs a mechanism and an effect on the reader.",
   "Never draft replacement copy. Give the DIRECTION a fix should take — name the missing population, keep the dropped qualifier, settle the ambiguity."
 ].join("\n");
 
@@ -208,10 +268,16 @@ export async function adjudicatePiece(input: {
           if (!verdict) return toFinding(candidate, "scanner");
           if (verdict.verdict === "not-slop") return null; // the gates cleared it
           const base = toFinding(candidate, "adjudicator");
+          const bucket = (verdict.bucket as SlopBucket | undefined) ?? (base.bucket as SlopBucket | undefined);
+          const code = verdict.code ?? base.code;
+          const primaryCode = bucket ? SLOP_CODE_BY_BUCKET[bucket] : base.primaryCode;
           return {
             ...base,
-            bucket: (verdict.bucket as 1 | 2 | 3 | 4 | undefined) ?? base.bucket,
-            code: verdict.code ?? base.code,
+            bucket,
+            code,
+            primaryCode,
+            secondaryCodes: base.secondaryCodes.filter((secondary) => secondary !== primaryCode),
+            severity: severityFor(code, primaryCode, candidate.unit.position),
             mechanism: verdict.mechanism ?? base.mechanism,
             effect: verdict.effect ?? base.effect,
             direction: verdict.direction ?? base.direction,
@@ -229,21 +295,23 @@ export async function adjudicatePiece(input: {
   }
 
   // Base-rate check. Over half the units flagged means form is being hunted.
+  // Low-confidence signals are reported but never counted (v1.2).
+  const shareOf = (list: AdjudicatedFinding[]) => (units.length ? drivingFindings(list).length / units.length : 0);
   let baseRateNote: string | undefined;
   let flaggedShare = units.length ? findings.length / units.length : 0;
   if (flaggedShare > Math.max(band[1], 0.5)) {
-    const formOnly = new Set(["S1.5", "S1.4", "S1.7"]); // triad, slogan run, punctuation rhythm
-    const reopened = findings.filter((finding) => !(finding.code && formOnly.has(finding.code)));
+    const reopened = findings.filter((finding) => !(finding.code && FORM_ONLY_CODES.has(finding.code)));
     if (reopened.length !== findings.length) {
       baseRateNote = `flagged ${(flaggedShare * 100).toFixed(0)}% of units — re-opened ${
         findings.length - reopened.length
       } form-only flags per the base-rate check`;
       findings = reopened;
-      flaggedShare = units.length ? findings.length / units.length : 0;
     }
   }
+  findings = withFrequency(findings);
+  flaggedShare = shareOf(findings);
 
-  const flaggedLocations = new Set(findings.map((finding) => finding.location));
+  const flaggedLocations = new Set(drivingFindings(findings).map((finding) => finding.location));
   return {
     format,
     unitsScanned: units.length,

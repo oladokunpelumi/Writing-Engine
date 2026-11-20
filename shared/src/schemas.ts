@@ -548,7 +548,18 @@ export const AdjudicatedFindingSchema = z.object({
   /** Direction only — never a drafted replacement sentence. */
   direction: z.string().default(""),
   gate: z.string().optional(),
-  source: z.enum(["scanner", "adjudicator"]).default("scanner")
+  source: z.enum(["scanner", "adjudicator"]).default("scanner"),
+  // ---- Anti-slop v1.2 ----
+  /** Primary cause: F formulaic, V vague/unsupported, W wordy, R repetitive/over-framed. */
+  primaryCode: z.enum(["F", "V", "W", "R"]).optional(),
+  /** Other codes, recorded only when they cause separate, evidenced harm. */
+  secondaryCodes: z.array(z.enum(["F", "V", "W", "R"])).default([]),
+  /** minor: meaning still clear · moderate: reduces clarity or trust · major: meaning or support lost. */
+  severity: z.enum(["minor", "moderate", "major"]).default("minor"),
+  /** Low-confidence findings are reported but never drive the verdict. */
+  confidence: z.enum(["high", "medium", "low"]).default("medium"),
+  /** Same primary code across the piece: once, twice, or three times or more. */
+  frequency: z.enum(["isolated", "repeated", "pervasive"]).default("isolated")
 });
 
 export const LocatedStrengthSchema = z.object({
@@ -1362,6 +1373,8 @@ export type DesireReport = z.infer<typeof DesireReportSchema>;
 export type DesirePassResponse = z.infer<typeof DesirePassResponseSchema>;
 export type ScannabilityReport = z.infer<typeof ScannabilityReportSchema>;
 export type AdjudicatedFinding = z.infer<typeof AdjudicatedFindingSchema>;
+/** A finding before schema defaults (severity/confidence/frequency) are applied. */
+export type AdjudicatedFindingInput = z.input<typeof AdjudicatedFindingSchema>;
 export type LocatedStrength = z.infer<typeof LocatedStrengthSchema>;
 export type AdjudicationReport = z.infer<typeof AdjudicationReportSchema>;
 export type PublishVerdict = z.infer<typeof PublishVerdictSchema>;

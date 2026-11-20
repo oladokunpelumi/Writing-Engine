@@ -1,35 +1,56 @@
 import { createHash } from "node:crypto";
 import type { DesireReport, QualityReport, QualityViolation, ScannabilityReport } from "../../shared/src";
-import { DEFAULT_BANNED_TERMS, HEADLINE_POWER_WORDS } from "../../shared/src";
+import { DEFAULT_BANNED_TERMS, HEADLINE_POWER_WORDS, hasConcreteAnchor, hasNamedEntity } from "../../shared/src";
+import { scanPhrase } from "./slopScan";
 
-const tierOne = [...DEFAULT_BANNED_TERMS, "in today's fast-paced world", "at the end of the day"];
-const tierTwo = ["not just", "more than ever", "it is important to note", "this underscores", "journey", "tapestry"];
+// Anti-slop v1.2: vocabulary is a CUE to look closer, never a cause. A word on
+// these lists is reported as a minor signal and does not, on its own, lower
+// trust or decide the verdict. Only a cluster (several cues in one sentence)
+// nudges the directness sub-score, because a cluster usually sits on top of a
+// real mechanism the adjudicator then names.
+const vocabularyCues = [
+  ...DEFAULT_BANNED_TERMS,
+  "in today's fast-paced world",
+  "at the end of the day",
+  "not just",
+  "more than ever",
+  "it is important to note",
+  "this underscores",
+  "journey",
+  "tapestry"
+];
 const structuralPatterns: Array<[string, RegExp, "critical" | "moderate" | "minor"]> = [
   ["Not just X but Y construction", /not just\b[^.?!]{0,120}\bbut\b/gi, "moderate"],
   ["Throat-clearing opener", /\b(in today's|in a world where|when it comes to)\b/gi, "moderate"],
   ["Wisdom-ending abstraction", /\b(ultimately|at the end of the day|the key is to remember)\b/gi, "minor"],
   ["Self-explaining metaphor", /\bthis metaphor (means|shows|represents)\b/gi, "minor"]
 ];
+// Support missing for a claim (v1.2 V: unsupported) — the one thing that does
+// cost trust. An unnamed authority asks the reader to believe without a source.
+const UNSUPPORTED_ATTRIBUTION =
+  /\b(studies (show|suggest|prove)|research (shows|suggests|proves)|experts (say|agree|believe)|scientists (say|agree)|many (people )?believe|it is (widely|commonly|generally) (known|believed|accepted))\b/gi;
 
 export function evaluateQuality(text: string, generationId?: string): Omit<QualityReport, "id" | "createdAt"> {
   const vocabularyViolations = scanVocabulary(text);
-  const structuralViolations = scanStructural(text);
-  const sentenceLengths = text
-    .split(/(?<=[.!?])\s+/)
-    .filter(Boolean)
-    .map((sentence) => sentence.trim().split(/\s+/).length);
+  const structuralViolations = [...scanStructural(text), ...scanUnsupported(text)];
+  const sentences = text.split(/(?<=[.!?])\s+/).filter(Boolean);
+  const sentenceLengths = sentences.map((sentence) => sentence.trim().split(/\s+/).length);
   const avg = sentenceLengths.reduce((sum, length) => sum + length, 0) / Math.max(sentenceLengths.length, 1);
   const variance =
     sentenceLengths.reduce((sum, length) => sum + Math.abs(length - avg), 0) / Math.max(sentenceLengths.length, 1);
-  const penalties = vocabularyViolations.length * 1.2 + structuralViolations.length * 1.4;
+  const clusters = cueClusters(sentences);
+  const unsupported = structuralViolations.filter((item) => item.label === "Unnamed authority").length;
+  const penalties = structuralViolations.length * 1.4 + clusters;
 
   const directness = clamp(10 - penalties * 0.6);
   const rhythm = clamp(variance > 7 ? 9 : variance > 4 ? 7 : 5);
-  const trust = clamp(10 - vocabularyViolations.filter((item) => item.severity === "critical").length * 2);
+  const trust = clamp(10 - unsupported * 2);
   const authenticity = clamp(10 - structuralViolations.length * 0.9);
   const density = clamp(10 - countFiller(text) * 0.8);
   const total = Math.round(directness + rhythm + trust + authenticity + density);
-  const verdict = total >= 43 ? "Pass" : total >= 35 ? "Flag" : total >= 25 ? "Revise" : "Reject";
+  // No automatic Reject (v1.2). The lowest hygiene verdict is Revise; whether a
+  // piece is publishable is the publish gate's call, with a named mechanism.
+  const verdict = total >= 43 ? "Pass" : total >= 35 ? "Flag" : "Revise";
 
   return {
     generationId,
@@ -40,29 +61,39 @@ export function evaluateQuality(text: string, generationId?: string): Omit<Quali
     verdict,
     summary:
       vocabularyViolations.length + structuralViolations.length === 0
-        ? "No major slop markers detected. Review for substance and accuracy."
-        : `Found ${vocabularyViolations.length} vocabulary and ${structuralViolations.length} structural markers. Clean the repeated tells before export.`
+        ? "No slop markers found. Check the substance and accuracy."
+        : `${structuralViolations.length} structural marker${structuralViolations.length === 1 ? "" : "s"}${
+            vocabularyViolations.length
+              ? ` and ${vocabularyViolations.length} vocabulary cue${vocabularyViolations.length === 1 ? "" : "s"} (cues mean look closer, not defects on their own)`
+              : ""
+          }.`
   };
 }
 
+/**
+ * Mechanical fixes that keep meaning exactly (v1.2 W: wordy). Deletes
+ * throat-clearing and collapses padded phrases. It does NOT swap vocabulary —
+ * trading "crucial" for "important" changes the word, not the mechanism — and
+ * it leaves staged contrasts ("not just X but Y") for the adjudicated revision,
+ * because fixing those needs judgment about what the sentence claims.
+ */
 export function rewriteSlop(text: string) {
   let revised = text;
   const replacements: Array<[RegExp, string]> = [
-    [/\bseamless\b/gi, "clean"],
-    [/\brobust\b/gi, "strong"],
-    [/\bleverage\b/gi, "use"],
-    [/\butilize\b/gi, "use"],
-    [/\bdelve into\b/gi, "look at"],
-    [/\bcrucial\b/gi, "important"],
-    [/\bvital\b/gi, "important"],
-    [/\btransformative\b/gi, "life-changing"],
-    [/\bnot just ([^,.!?;]+),? but ([^,.!?;]+)/gi, "$1, and also $2"],
     [/\bIn today's fast-paced world,?\s*/gi, ""],
-    [/\bIt is important to note that\s*/gi, ""]
+    [/\bIt is important to note that\s*/gi, ""],
+    [/\bIt'?s worth noting that\s*/gi, ""],
+    [/\bin order to\b/gi, "to"],
+    [/\bdue to the fact that\b/gi, "because"],
+    [/\bat this point in time\b/gi, "now"],
+    [/\butilize\b/gi, "use"],
+    [/\butilizes\b/gi, "uses"]
   ];
   for (const [pattern, replacement] of replacements) {
     revised = revised.replace(pattern, replacement);
   }
+  // A deletion at a sentence start leaves a lower-case first letter.
+  revised = revised.replace(/(^|[.!?]\s+)([a-z])/g, (_match, lead: string, letter: string) => lead + letter.toUpperCase());
   return revised
     .replace(/[ \t]{2,}/g, " ")
     .replace(/\n{3,}/g, "\n\n")
@@ -71,29 +102,35 @@ export function rewriteSlop(text: string) {
 
 function scanVocabulary(text: string): QualityViolation[] {
   const violations: QualityViolation[] = [];
-  for (const term of tierOne) {
+  for (const term of vocabularyCues) {
     const pattern = new RegExp(`\\b${escapeRegExp(term)}\\b`, "gi");
     for (const match of text.matchAll(pattern)) {
       violations.push({
-        severity: "critical",
+        severity: "minor",
         category: "vocabulary",
-        label: term,
-        excerpt: excerpt(text, match.index ?? 0)
-      });
-    }
-  }
-  for (const term of tierTwo) {
-    const pattern = new RegExp(`\\b${escapeRegExp(term)}\\b`, "gi");
-    for (const match of text.matchAll(pattern)) {
-      violations.push({
-        severity: "moderate",
-        category: "vocabulary",
-        label: term,
+        label: `cue: ${term}`,
         excerpt: excerpt(text, match.index ?? 0)
       });
     }
   }
   return violations;
+}
+
+/** Sentences carrying three or more vocabulary cues — the only cue signal that is scored. */
+function cueClusters(sentences: string[]): number {
+  return sentences.filter((sentence) => {
+    const lower = sentence.toLowerCase();
+    return vocabularyCues.filter((term) => new RegExp(`\\b${escapeRegExp(term)}\\b`).test(lower)).length >= 3;
+  }).length;
+}
+
+function scanUnsupported(text: string): QualityViolation[] {
+  return Array.from(text.matchAll(UNSUPPORTED_ATTRIBUTION)).map((match) => ({
+    severity: "moderate" as const,
+    category: "structure",
+    label: "Unnamed authority",
+    excerpt: excerpt(text, match.index ?? 0)
+  }));
 }
 
 function scanStructural(text: string): QualityViolation[] {
@@ -195,7 +232,8 @@ export function headlineScore(text: string): { score: number; reasons: string[] 
     reasons.push("a clear promise");
   }
   // Specificity: a year, or a Named thing beyond the first word.
-  if (/\b(19|20)\d{2}\b/.test(line) || words.slice(1).some((word) => /^[A-Z][a-z]{2,}/.test(word))) {
+  // Title Case capitalises every word, so capitals alone are not specificity.
+  if (/\b(19|20)\d{2}\b/.test(line) || hasNamedEntity(line)) {
     score += 1;
     reasons.push("something specific/named");
   }
@@ -216,10 +254,17 @@ export function headlineScore(text: string): { score: number; reasons: string[] 
     score -= 1;
     reasons.push("too thin to promise anything");
   }
-  const slop = DEFAULT_BANNED_TERMS.filter((term) => lower.includes(term));
-  if (slop.length) {
-    score -= Math.min(3, slop.length * 2);
-    reasons.push(`generic filler: ${slop.slice(0, 3).join(", ")}`);
+  // v1.2: judge the line's mechanism, not its vocabulary. The calibrated scanner
+  // asks whether the headline is portable (could title any piece), vague, or a
+  // stock formula — words alone never cost points.
+  const scan = scanPhrase({ phrase: line, position: "title", format: "headline" });
+  if (scan.verdict === "slop") {
+    score -= scan.primaryCode === "V" ? 3 : 2;
+    reasons.push(`${scan.primaryCode ?? "slop"}: ${scan.mechanism ?? "names nothing a reader could check"}`);
+  } else if (words.length > 0 && !hasConcreteAnchor(line) && !reasons.includes("targets the reader") && !reasons.includes("a clear promise")) {
+    // Portable (v1.2 V): no anchor, no reader, no promise — it could title any piece.
+    score -= 2;
+    reasons.push("V: portable — could title an unrelated piece unedited");
   }
   const letters = line.replace(/[^a-zA-Z]/g, "");
   if (letters.length > 6 && letters === letters.toUpperCase()) {

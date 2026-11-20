@@ -98,6 +98,14 @@ type Tab = "compose" | "grid" | "experiments" | "graph" | "library" | "import" |
 
 // The advanced engines live behind the "Labs" group in the sidebar; the primary
 // spine is just Create / Library / Voice.
+// Anti-slop v1.2 primary-cause codes, in diagnosis order V > W > F > R.
+const SLOP_CODE_LABELS: Record<"F" | "V" | "W" | "R", string> = {
+  V: "Vague or unsupported: meaning, actor, support or causal link is missing",
+  W: "Wordy: meaning is there but buried",
+  F: "Formulaic: meaning is clear but canned",
+  R: "Repetitive: the point is delayed or said twice"
+};
+
 const LABS_TABS: Tab[] = ["discover", "grid", "video", "experiments", "graph", "calendar", "import", "corpus", "prompts", "history"];
 
 const blankBrief: BriefInput = {
@@ -3307,10 +3315,20 @@ function PublishGatePanel({
           {report.baseRateNote ? <p className="mt-1 text-xs text-dusk">{report.baseRateNote}</p> : null}
           <div className="mt-2 grid gap-2">
             {report.findings.map((finding, i) => (
-              <div className="rounded-md border border-slate-200 p-2" key={i}>
+              <div className={`rounded-md border p-2 ${finding.confidence === "low" ? "border-dashed border-slate-200 opacity-75" : "border-slate-200"}`} key={i}>
                 <div className="flex flex-wrap items-center gap-2">
+                  {finding.primaryCode ? (
+                    <span className="badge" title={SLOP_CODE_LABELS[finding.primaryCode]}>
+                      {finding.primaryCode}{finding.secondaryCodes?.length ? `+${finding.secondaryCodes.join("")}` : ""}
+                    </span>
+                  ) : null}
                   <span className="badge">{finding.code ?? `bucket ${finding.bucket ?? "?"}`}</span>
                   <span className="text-xs font-bold uppercase text-slate-500">{finding.location}</span>
+                  <span className={`text-xs ${finding.severity === "major" ? "font-bold text-ember" : "text-slate-500"}`}>
+                    {finding.severity}
+                    {finding.frequency && finding.frequency !== "isolated" ? ` · ${finding.frequency}` : ""}
+                    {finding.confidence === "low" ? " · a cue, not counted" : finding.confidence ? ` · ${finding.confidence} confidence` : ""}
+                  </span>
                 </div>
                 <p className="mt-1 text-sm italic text-slate-700">&ldquo;{finding.quote}&rdquo;</p>
                 <p className="mt-1 text-xs text-slate-600">{finding.mechanism}{finding.effect ? ` — ${finding.effect}` : ""}</p>

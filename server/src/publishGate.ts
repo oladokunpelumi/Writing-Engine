@@ -12,7 +12,7 @@
 import type { AdjudicationReport, PublishVerdict, VoiceProfile } from "../../shared/src";
 import { aiProvider, modelFor, rawChat, systemPrompt } from "./openrouter";
 import { evaluateQuality } from "./quality";
-import { segmentPiece } from "./adjudicate";
+import { drivingFindings, segmentPiece } from "./adjudicate";
 import { hasConcreteAnchor } from "../../shared/src";
 
 /** Score at or above which a piece may enter the ready-to-post queue. */
@@ -75,10 +75,12 @@ export function publishVerdict(input: {
   const hygiene = evaluateQuality(text).scores.total;
   const synthesis = synthesisTest(text);
   const share = report.flaggedShare;
+  // v1.2: low-confidence signals are shown to the writer but never move the verdict.
+  const driving = drivingFindings(report.findings);
 
   // A pattern recurring across three or more locations is a piece-wide defect.
   const byCode = new Map<string, number>();
-  for (const finding of report.findings) {
+  for (const finding of driving) {
     const key = finding.code ?? finding.mechanism;
     byCode.set(key, (byCode.get(key) ?? 0) + 1);
   }
@@ -86,7 +88,7 @@ export function publishVerdict(input: {
 
   // Canned openings and endings are the most damaging defects in a published
   // piece — they are the first and last thing a reader meets.
-  const critical = report.findings.filter(
+  const critical = driving.filter(
     (finding) => /^(title|closing)/.test(finding.location) || finding.location === "title"
   );
 
@@ -103,7 +105,7 @@ export function publishVerdict(input: {
     ceiling = Math.min(ceiling, 4);
     ceilingReason = `"${recurring[0]}" recurs in ${recurring[1]} places`;
   }
-  if (report.findings.length > 0) ceiling = Math.min(ceiling, 6); // any located defect blocks 7
+  if (driving.length > 0) ceiling = Math.min(ceiling, 6); // any located defect blocks 7
   if (share > 0.5) ceiling = Math.min(ceiling, 3);
   if (share > 0.7) ceiling = Math.min(ceiling, 2);
 
@@ -139,7 +141,7 @@ export function publishVerdict(input: {
 
   const ready = score >= readyScore && critical.length === 0;
   const reason = ready
-    ? `Scored ${score}/7 with ${report.findings.length} located defect${report.findings.length === 1 ? "" : "s"}; ${tieBreak}.`
+    ? `Scored ${score}/7 with ${driving.length} located defect${driving.length === 1 ? "" : "s"}; ${tieBreak}.`
     : critical.length > 0 && score >= readyScore
       ? `Blocked: ${critical.length} defect${critical.length === 1 ? "" : "s"} on the opening or closing surface, where a reader meets the piece first and last.`
       : `Blocked at ${score}/7 (needs ${readyScore}); ${tieBreak}.`;

@@ -85,6 +85,22 @@ export interface StockFormula {
   code: string;
 }
 
+// ---- Anti-slop v1.2 vocabulary (F/V/W/R) ----
+// The four buckets are v1.2's four codes under their field-kit numbers:
+// 1 formulaic/manufactured = F, 2 vague/unsupported = V,
+// 3 wordy/indirect/jargon = W, 4 repetitive/over-framed = R.
+export type SlopCode = "F" | "V" | "W" | "R";
+export type SlopBucket = 1 | 2 | 3 | 4;
+
+export const SLOP_CODE_BY_BUCKET: Record<SlopBucket, SlopCode> = { 1: "F", 2: "V", 3: "W", 4: "R" };
+
+/**
+ * v1.2 primary-cause order for a phrase that trips several codes: V (meaning or
+ * support missing) before W (meaning recoverable but buried) before F (clear
+ * meaning, canned phrasing) before R (useful point delayed or duplicated).
+ */
+export const PRIMARY_CAUSE_ORDER: SlopBucket[] = [2, 3, 1, 4];
+
 /**
  * Canned openers, closers, and empty benefits, each mapped to the four-bucket
  * taxonomy and its sub-pattern code from the Content Grading V2 field kit.

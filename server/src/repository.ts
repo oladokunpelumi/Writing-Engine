@@ -40,7 +40,7 @@ import type {
   WorkflowRecipePreview,
   UsageLimit,
   UsageStatus,
-  AdjudicatedFinding,
+  AdjudicatedFindingInput,
   VideoPersona,
   VideoPersonaInput,
   VideoProject,
@@ -669,9 +669,10 @@ export class Repository {
   }
 
   /** Persist located findings so the writer's recurring failure modes accumulate. */
-  async recordFindings(postId: string | undefined, findings: AdjudicatedFinding[]): Promise<void> {
+  async recordFindings(postId: string | undefined, findings: AdjudicatedFindingInput[]): Promise<void> {
     const ts = now();
-    for (const finding of findings) {
+    // Low-confidence cues are style, not defects: they never enter the profile (anti-slop v1.2).
+    for (const finding of findings.filter((f) => f.confidence !== "low")) {
       await this.db
         .prepare(
           `INSERT INTO slop_findings (id, owner_id, post_id, bucket, code, mechanism, location, quote, created_at)
