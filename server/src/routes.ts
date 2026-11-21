@@ -1196,6 +1196,7 @@ export function createRouter(repo: Repository) {
         voice: await repo.getVoice(),
         targetSeconds: input.targetSeconds,
         aspect: input.aspect,
+        look: input.look,
         sourcePostId: post?.id ?? input.postId,
         promptBody: (await repo.getActivePromptVersion("motion-story"))?.body
       });
@@ -1236,6 +1237,7 @@ export function createRouter(repo: Repository) {
         voice: await repo.getVoice(),
         targetSeconds: input.targetSeconds,
         aspect: input.aspect,
+        look: input.look,
         sourcePostId: project.sourcePostId,
         promptBody: (await repo.getActivePromptVersion("motion-story"))?.body,
         previous: project.motionStory
@@ -1323,12 +1325,18 @@ export function createRouter(repo: Repository) {
       }
       const folder = buildMotionPieceFolder(project, project.motionStory);
       if (req.query.format === "json") {
-        res.json(folder);
+        // Binary kit files (fonts, GSAP) are listed by size, not inlined.
+        res.json({
+          folderName: folder.folderName,
+          files: folder.files.map((file) =>
+            typeof file.content === "string" ? file : { path: file.path, binary: true, bytes: file.content.length }
+          )
+        });
         return;
       }
       const zip = new AdmZip();
       for (const file of folder.files) {
-        zip.addFile(`${folder.folderName}/${file.path}`, Buffer.from(file.content, "utf8"));
+        zip.addFile(`${folder.folderName}/${file.path}`, typeof file.content === "string" ? Buffer.from(file.content, "utf8") : file.content);
       }
       res.setHeader("Content-Type", "application/zip");
       res.setHeader("Content-Disposition", `attachment; filename="${folder.folderName}.zip"`);

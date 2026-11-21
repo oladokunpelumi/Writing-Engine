@@ -233,7 +233,7 @@ export const api = {
       headers: jsonHeaders,
       body: JSON.stringify(input)
     }),
-  updateMotionStory: (projectId: string, input: { beats: MotionBeat[]; oneThing?: string; title?: string }) =>
+  updateMotionStory: (projectId: string, input: { beats: MotionBeat[]; oneThing?: string; title?: string; look?: "paper-ember" | "night-signal" | "riso-print" }) =>
     request<VideoProject>(`/api/video/projects/${projectId}/motion-story`, {
       method: "PATCH",
       headers: jsonHeaders,

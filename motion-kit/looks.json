@@ -1,0 +1,134 @@
+{
+  "generatedFrom": "shared/src/motionLooks.ts",
+  "defaultLook": "paper-ember",
+  "treatments": [
+    "reveal",
+    "slam",
+    "underline",
+    "circle",
+    "strike",
+    "focus",
+    "count",
+    "stamp",
+    "still"
+  ],
+  "looks": {
+    "paper-ember": {
+      "id": "paper-ember",
+      "name": "Paper & Ember",
+      "bestFor": "Reflective essays and Co-Create's own posts: quiet, warm, written by a hand.",
+      "medium": "Ink on warm paper with an ember pen that marks the word that matters. Co-Create's own colours and type.",
+      "palette": {
+        "ground": "#F5F1E8",
+        "ink": "#111827",
+        "accent": "#C26B2C",
+        "accentText": "#A3541C",
+        "second": "#6E5B92",
+        "muted": "#B9B2A4"
+      },
+      "display": {
+        "family": "Syne",
+        "weight": 700,
+        "caps": false,
+        "lineHeight": 1.04,
+        "tracking": "-0.01em",
+        "maxSize": 170,
+        "maxChars": 15,
+        "file": "Syne-700-latin.woff2"
+      },
+      "revealStyle": "ink",
+      "carrier": "none",
+      "grain": 0.08,
+      "markStroke": 10,
+      "defaults": {
+        "hook": "underline",
+        "turn": "reveal",
+        "proof": "circle",
+        "payoff": "still",
+        "cta": "underline"
+      },
+      "music": {
+        "mood": "calm, warm, unhurried",
+        "suggestion": "Mixkit #419 'Pilates and Yoga' (Arulo), ambient"
+      }
+    },
+    "night-signal": {
+      "id": "night-signal",
+      "name": "Night Signal",
+      "bestFor": "Punchy, motivational pieces and hard turns: a road at night, words like signs.",
+      "medium": "Headlight-white condensed caps on asphalt, one sodium-amber word per card, lane dashes that travel with every cut.",
+      "palette": {
+        "ground": "#131418",
+        "ink": "#F3F0E8",
+        "accent": "#F4A43A",
+        "accentText": "#F4A43A",
+        "second": "#E4572E",
+        "muted": "#4B4D55"
+      },
+      "display": {
+        "family": "League Gothic",
+        "weight": 400,
+        "caps": true,
+        "lineHeight": 0.92,
+        "tracking": "0.01em",
+        "maxSize": 300,
+        "maxChars": 26,
+        "file": null
+      },
+      "revealStyle": "blur",
+      "carrier": "lane-dashes",
+      "grain": 0.06,
+      "markStroke": 9,
+      "defaults": {
+        "hook": "slam",
+        "turn": "reveal",
+        "proof": "focus",
+        "payoff": "still",
+        "cta": "reveal"
+      },
+      "music": {
+        "mood": "night drive, low tension that resolves",
+        "suggestion": "Mixkit #723 'Other World' (Lily J), chillout tension"
+      }
+    },
+    "riso-print": {
+      "id": "riso-print",
+      "name": "Riso Print",
+      "bestFor": "Lists, proof and figures, and Co-Create marketing that should feel loud and made.",
+      "medium": "A two-plate risograph: blue ink for words, fluorescent orange for emphasis and its off-register shadow, halftone dots for every gradient.",
+      "palette": {
+        "ground": "#F2EDE3",
+        "ink": "#2337A0",
+        "accent": "#FF5C39",
+        "accentText": "#2337A0",
+        "second": "#FF5C39",
+        "muted": "#B8BCD8"
+      },
+      "display": {
+        "family": "Archivo Black",
+        "weight": 400,
+        "caps": true,
+        "lineHeight": 0.96,
+        "tracking": "-0.005em",
+        "maxSize": 240,
+        "maxChars": 15,
+        "file": null
+      },
+      "revealStyle": "print",
+      "carrier": "halftone",
+      "grain": 0.1,
+      "markStroke": 12,
+      "defaults": {
+        "hook": "stamp",
+        "turn": "reveal",
+        "proof": "count",
+        "payoff": "still",
+        "cta": "stamp"
+      },
+      "music": {
+        "mood": "bright, bouncy, made by hand",
+        "suggestion": "Mixkit #702 'Pop 09' (Grigoriy Nuzhny), positive"
+      }
+    }
+  }
+}

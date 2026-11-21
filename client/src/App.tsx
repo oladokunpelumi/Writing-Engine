@@ -3262,8 +3262,8 @@ function VideoStudioView({
               project={currentProject}
               busy={busy}
               onRegenerate={handleRegenerateMotionStory}
-              onSave={(beats, oneThing) =>
-                runStep("Saving story edits", () => api.updateMotionStory(currentProject.id, { beats, oneThing }), updateProject)
+              onSave={(beats, oneThing, look) =>
+                runStep("Saving story edits", () => api.updateMotionStory(currentProject.id, { beats, oneThing, look }), updateProject)
               }
               onCheck={() => runStep("Checking the words", () => api.checkMotionStory(currentProject.id), updateProject)}
               onApprove={() => runStep("Approving the story", () => api.approveMotionStory(currentProject.id), updateProject)}

@@ -15,8 +15,13 @@
 // `audioCue` stay empty on every beat.
 
 import { createHash, randomUUID } from "node:crypto";
+import { readFileSync, readdirSync, statSync } from "node:fs";
+import { dirname, join, relative } from "node:path";
+import { fileURLToPath } from "node:url";
 import type {
   AdjudicatedFinding,
+  MotionLookId,
+  MotionTreatment,
   MotionBeat,
   MotionBeatRole,
   MotionGateIssue,
@@ -31,6 +36,11 @@ import {
   DESIRE_DOCTRINE,
   HOOK_DOCTRINE,
   MOTION_STORY_DOCTRINE,
+  DEFAULT_MOTION_LOOK,
+  MOTION_LOOKS,
+  MOTION_TREATMENTS,
+  MOTION_TREATMENT_NOTES,
+  resolveTreatment,
   MotionBeatRoleSchema,
   MotionTransitionSchema,
   ONE_THING_DOCTRINE,
@@ -47,7 +57,10 @@ export const MAX_LINES_PER_CARD = 3;
 /** Vertical feeds read about 5 English words per line of a claim (HyperFrames vertical guide). */
 export const MAX_WORDS_PER_LINE = 5;
 
-export const STORY_CONTRACT_VERSION = "co-create.motion-story/1";
+export const STORY_CONTRACT_VERSION = "co-create.motion-story/2";
+
+/** The builder shipped inside every exported piece folder (repo: motion-kit/). */
+const MOTION_KIT_DIR = join(dirname(fileURLToPath(import.meta.url)), "..", "..", "motion-kit");
 
 const BEATS_FOR_LENGTH: Record<number, [number, number]> = {
   15: [3, 4],
@@ -190,6 +203,7 @@ function titleFor(role: MotionBeatRole, index: number, roles: MotionBeatRole[]):
 
 interface RawBeat {
   role?: string;
+  treatment?: string;
   seconds?: number;
   start?: number;
   end?: number;
@@ -285,7 +299,8 @@ export function normalizeBeats(raw: RawBeat[], targetSeconds: number, options: {
       lines,
       emphasis: (beat.emphasis ?? []).map(String).filter((word) => word && onScreen.includes(word.toLowerCase())).slice(0, 3),
       transitionOut: index === cleaned.length - 1 ? "cut" : transitionOf(beat.transitionOut),
-      sourceQuote: String(beat.sourceQuote ?? "").trim()
+      sourceQuote: String(beat.sourceQuote ?? "").trim(),
+      treatment: (MOTION_TREATMENTS as readonly string[]).includes(String(beat.treatment)) ? (beat.treatment as MotionTreatment) : undefined
     };
   });
 }
@@ -360,21 +375,44 @@ export function mockMotionStory(input: { text: string; title?: string; targetSec
     ...middle.map((sentence, index) => {
       const role: MotionBeatRole = hasConcreteAnchor(sentence) && /\d/.test(sentence) ? "proof" : "turn";
       const lines = toCardLines(sentence);
+      const figures = figuresInLines(lines);
+      const negated = negatedWord(lines.join(" "));
+      // A figure counts up; "not X" strikes X; everything else takes the look's default.
+      const treatment: MotionTreatment | undefined = figures.length ? "count" : negated ? "strike" : undefined;
       return {
         role,
         lines,
-        emphasis: figuresInLines(lines),
+        treatment,
+        emphasis: figures.length ? figures : negated ? [negated] : [],
         sourceQuote: sentence,
         transitionOut: index === middle.length - 1 ? "hold" : transitions[index % transitions.length],
         visualAction: VISUALS[role]
       };
     }),
-    { role: "payoff", lines: toCardLines(oneThing), sourceQuote: oneThing, transitionOut: "cut", visualAction: VISUALS.payoff }
+    { role: "payoff", lines: toCardLines(oneThing), sourceQuote: oneThing, transitionOut: "cut", visualAction: VISUALS.payoff, treatment: "still" }
   ];
   // Give the payoff the longest hold.
   beats.forEach((beat) => (beat.seconds = readingSeconds(beat.lines as string[]) + (beat.role === "payoff" ? 1.5 : 0.4)));
 
   return { title, oneThing, hookCandidates: [hook, title, oneThing], beats };
+}
+
+/** The word a "not" negates, e.g. "They are not walls." -> "walls". */
+function negatedWord(text: string): string | undefined {
+  return text.match(/\b(?:not|never|isn'?t|aren'?t|no longer)\s+(?:a |an |the |just |your |my )?([A-Za-z][\w'-]*)/i)?.[1];
+}
+
+/**
+ * Suggest a house look from the piece's shape: figures -> Riso Print (proof and
+ * numbers), short punchy lines -> Night Signal, everything else -> Paper & Ember.
+ */
+export function suggestLook(text: string): MotionLookId {
+  const sentences = sentencesOf(text);
+  const figures = (text.match(/\d[\d,.]*%?/g) ?? []).length;
+  if (figures >= 3) return "riso-print";
+  const avg = sentences.reduce((sum, s) => sum + wordsOf(s).length, 0) / Math.max(1, sentences.length);
+  if (sentences.length >= 6 && avg <= 9) return "night-signal";
+  return DEFAULT_MOTION_LOOK;
 }
 
 function figuresInLines(lines: string[]): string[] {
@@ -390,9 +428,11 @@ export async function runMotionStory(input: {
   sourcePostId?: string;
   promptBody?: string;
   previous?: MotionStory;
+  look?: MotionLookId;
 }): Promise<{ story: MotionStory; cost: number }> {
   const targetSeconds = input.targetSeconds ?? 30;
   const aspect = input.aspect ?? "9:16";
+  const look = input.look ?? input.previous?.look ?? suggestLook(input.text);
   const now = new Date().toISOString();
 
   let draft: ReturnType<typeof mockMotionStory>;
@@ -416,8 +456,10 @@ export async function runMotionStory(input: {
       .join("\n\n");
     const user = [
       input.promptBody ??
-        'Return ONLY strict JSON: { "title", "oneThing", "hookCandidates": [3 lines], "beats": [{ "role", "seconds", "lines", "emphasis", "visualAction", "transitionOut", "sourceQuote" }] }.',
+        'Return ONLY strict JSON: { "title", "oneThing", "hookCandidates": [3 lines], "beats": [{ "role", "seconds", "lines", "emphasis", "treatment", "visualAction", "transitionOut", "sourceQuote" }] }.',
       `Target length: ${targetSeconds} seconds. Aspect: ${aspect}. Use ${minBeats}-${maxBeats} beats.`,
+      `Look: ${MOTION_LOOKS[look].name} (${MOTION_LOOKS[look].medium}).`,
+      `Give each beat a "treatment" for its emphasis word, one of: ${MOTION_TREATMENTS.map((t) => `${t} (${MOTION_TREATMENT_NOTES[t]})`).join("; ")}. Use slam or stamp on at most a third of the beats, never the same mark three beats running, and "still" for the payoff.`,
       `<PIECE title="${(input.title ?? "").replace(/"/g, "'")}">\n${input.text.slice(0, 24_000)}\n</PIECE>`
     ].join("\n\n");
     const { content, usage } = await rawChat({ model: modelFor("motion-story"), system, user, temperature: 0.6 });
@@ -458,6 +500,7 @@ export async function runMotionStory(input: {
     id: input.previous?.id ?? randomUUID(),
     version: (input.previous?.version ?? 0) + 1,
     lane: "kinetic-type",
+    look,
     aspect,
     fps: 30,
     soundMode: "silent-first",
@@ -484,20 +527,27 @@ function retimeToTarget(beats: MotionBeat[], targetSeconds: number): MotionBeat[
   );
 }
 
-/** Apply a writer's edit: re-time from the edited holds and clear the gate and approval. */
-export function applyMotionEdit(story: MotionStory, edit: { beats: MotionBeat[]; oneThing?: string; title?: string }): MotionStory {
+/**
+ * Apply a writer's edit: re-time from the edited holds. A change to words,
+ * timing or sources clears the words check and the approval; a change to the
+ * look or a beat's treatment alone keeps them, because the check is about words.
+ */
+export function applyMotionEdit(
+  story: MotionStory,
+  edit: { beats: MotionBeat[]; oneThing?: string; title?: string; look?: MotionLookId }
+): MotionStory {
   const beats = retimeBeats(edit.beats);
-  return {
+  const next: MotionStory = {
     ...story,
     title: edit.title ?? story.title,
     oneThing: edit.oneThing ?? story.oneThing,
+    look: edit.look ?? story.look,
     beats,
     totalSeconds: beats[beats.length - 1].end,
-    wordsGate: undefined,
-    approved: false,
-    approvedAt: undefined,
     updatedAt: new Date().toISOString()
   };
+  if (motionStoryHash(next) === motionStoryHash(story)) return next;
+  return { ...next, wordsGate: undefined, approved: false, approvedAt: undefined };
 }
 
 // ---------------------------------------------------------------------------
@@ -599,6 +649,51 @@ export async function checkMotionWords(input: { story: MotionStory; pieceText: s
     });
   }
 
+  // The visual layer: notes only, never blocking (the words decide approval).
+  const look = MOTION_LOOKS[story.look ?? DEFAULT_MOTION_LOOK];
+  const resolved = story.beats.map((beat) => {
+    const asked = beat.treatment ?? look.defaults[beat.role];
+    return { beat, asked, used: resolveTreatment(look, asked, beat.emphasis) };
+  });
+  for (const { beat, asked, used } of resolved) {
+    if (asked !== used) {
+      issues.push({
+        sceneId: beat.sceneId,
+        kind: "treatment",
+        blocking: false,
+        message: `${beat.title}: "${asked}" will render as "${used}" in ${look.name}.`,
+        direction:
+          asked === "count"
+            ? "Count needs a number as the beat's emphasis word."
+            : asked === "stamp"
+              ? "Stamp belongs to Riso Print; pick slam here, or switch the look."
+              : "Give the beat an emphasis word for the treatment to land on."
+      });
+    }
+  }
+  const heavy = resolved.filter(({ used }) => used === "slam" || used === "stamp").length;
+  if (heavy > Math.ceil(story.beats.length / 3)) {
+    issues.push({
+      sceneId: story.beats[0]?.sceneId ?? "beat-1",
+      kind: "treatment",
+      blocking: false,
+      message: `${heavy} of ${story.beats.length} beats slam or stamp; hits stop landing when every card hits.`,
+      direction: "Keep slams for the hook and one turn; let the rest reveal."
+    });
+  }
+  for (let i = 2; i < resolved.length; i++) {
+    const run = [resolved[i - 2].used, resolved[i - 1].used, resolved[i].used];
+    if (run[0] !== "reveal" && run[0] === run[1] && run[1] === run[2]) {
+      issues.push({
+        sceneId: resolved[i].beat.sceneId,
+        kind: "treatment",
+        blocking: false,
+        message: `Three beats in a row use "${run[0]}"; the third reads as a repeat (anti-slop R, in motion).`,
+        direction: "Change the middle one, or let it simply reveal."
+      });
+    }
+  }
+
   // Anti-slop v1.2 on every card, judged in its own register.
   const units: PieceUnit[] = story.beats.map((beat) => ({
     text: beat.lines.join(" "),
@@ -651,7 +746,26 @@ export function approvalBlocker(story: MotionStory | undefined): string | undefi
 
 export interface PieceFile {
   path: string;
-  content: string;
+  content: string | Buffer;
+}
+
+/** Every file of the motion kit, plus looks.json generated from the shared source of truth. */
+export function motionKitFiles(): PieceFile[] {
+  const files: PieceFile[] = [];
+  const walk = (dir: string) => {
+    for (const name of readdirSync(dir)) {
+      if (name.startsWith(".") || name === "node_modules") continue;
+      const full = join(dir, name);
+      if (statSync(full).isDirectory()) walk(full);
+      else if (name !== "looks.json") files.push({ path: `work/motion-kit/${relative(MOTION_KIT_DIR, full)}`, content: readFileSync(full) });
+    }
+  };
+  walk(MOTION_KIT_DIR);
+  files.push({
+    path: "work/motion-kit/looks.json",
+    content: JSON.stringify({ generatedFrom: "shared/src/motionLooks.ts", defaultLook: DEFAULT_MOTION_LOOK, treatments: MOTION_TREATMENTS, looks: MOTION_LOOKS }, null, 2) + "\n"
+  });
+  return files;
 }
 
 export function slugify(value: string): string {
@@ -671,6 +785,7 @@ export function storyContract(project: VideoProject, story: MotionStory) {
   return {
     contract: STORY_CONTRACT_VERSION,
     title: story.title,
+    look: story.look ?? DEFAULT_MOTION_LOOK,
     oneThing: story.oneThing,
     lane: story.lane,
     soundMode: story.soundMode,
@@ -692,6 +807,11 @@ export function storyContract(project: VideoProject, story: MotionStory) {
       emphasis: beat.emphasis,
       visual: beat.visualAction,
       transitionOut: beat.transitionOut,
+      treatment: resolveTreatment(
+        MOTION_LOOKS[story.look ?? DEFAULT_MOTION_LOOK],
+        beat.treatment ?? MOTION_LOOKS[story.look ?? DEFAULT_MOTION_LOOK].defaults[beat.role],
+        beat.emphasis
+      ),
       sourceQuote: beat.sourceQuote
     })),
     rules: {
@@ -721,13 +841,14 @@ export function storyContract(project: VideoProject, story: MotionStory) {
 }
 
 function briefMarkdown(project: VideoProject, story: MotionStory, slug: string): string {
+  const look = MOTION_LOOKS[story.look ?? DEFAULT_MOTION_LOOK];
   const platforms =
     story.aspect === "9:16" ? "Instagram Reels, TikTok, YouTube Shorts" : story.aspect === "1:1" ? "LinkedIn and X feed" : "YouTube, LinkedIn, X";
   const deliverable = `deliver/${slug}_<platform>_${story.aspect.replace(":", "x")}_${Math.round(story.totalSeconds)}s.mp4`;
   const rows = story.beats
     .map(
       (beat) =>
-        `| ${beat.start.toFixed(1)}–${beat.end.toFixed(1)}s | ${beat.title} | ${beat.lines.join(" / ").replace(/\|/g, "\\|")} | ${beat.transitionOut} |`
+        `| ${beat.start.toFixed(1)}–${beat.end.toFixed(1)}s | ${beat.title} | ${beat.lines.join(" / ").replace(/\|/g, "\\|")} | ${resolveTreatment(look, beat.treatment ?? look.defaults[beat.role], beat.emphasis)} | ${beat.transitionOut} |`
     )
     .join("\n");
   const hooks = story.hookCandidates.map((hook) => `- ${hook.text} (score ${hook.score}/10)`).join("\n");
@@ -748,13 +869,19 @@ function briefMarkdown(project: VideoProject, story: MotionStory, slug: string):
     "Variants for A/B:",
     hooks || "- none",
     "",
+    "## Look",
+    `**${look.name}.** ${look.medium}`,
+    `- Ground \`${look.palette.ground}\`, ink \`${look.palette.ink}\`, accent \`${look.palette.accent}\` (as text \`${look.palette.accentText}\`), second ink \`${look.palette.second}\`.`,
+    `- Type: ${look.display.family} ${look.display.weight}${look.display.caps ? ", caps" : ""}.`,
+    `- Music: ${look.music.mood}. Suggested: ${look.music.suggestion}. Check the licence page before export.`,
+    "",
     "## Structure",
-    "| Time | Beat | On screen | Seam out |",
-    "| --- | --- | --- | --- |",
+    "| Time | Beat | On screen | Treatment | Seam out |",
+    "| --- | --- | --- | --- | --- |",
     rows,
     "",
     "## Format",
-    `- Lane: kinetic type, text only. Sound: ${story.soundMode === "silent-first" ? "silent-first (music and sound effects are a later pass; nothing is narrated)" : story.soundMode}.`,
+    `- Lane: kinetic type, text only; nothing is narrated. Sound: a music bed and one recorded sound per visible action, from the cue list the builder writes (\`video/cues.json\`).`,
     `- Aspect ${story.aspect}, ${CANVAS[story.aspect].width}x${CANVAS[story.aspect].height}, ${story.fps} fps, ${story.totalSeconds.toFixed(1)}s.`,
     `- Platforms: ${platforms}.`,
     `- Deliverable name: \`${deliverable}\`.`,
@@ -763,23 +890,25 @@ function briefMarkdown(project: VideoProject, story: MotionStory, slug: string):
     "- Every on-screen word comes from `story.json` `beats[].lines`. Do not retype, rewrite or add copy.",
     "- No number, name or claim beyond what `story.json` holds. Each beat's `sourceQuote` is the sentence it stands on.",
     `- A beat holds at least ${SETTLE_SECONDS}s plus 1s per ${WORDS_PER_SECOND} words. The words gate in Co-Create already checked this.`,
-    "- Brand colours, type and logo come from `brand/` (run `brand-intake` if it is empty), not invented.",
+    "- Colours and type come from the look above (or from `brand/` once `brand-intake` has run), not invented.",
     ""
   ].join("\n");
 }
 
-function claudeMarkdown(slug: string): string {
+function claudeMarkdown(slug: string, story: MotionStory): string {
+  const look = MOTION_LOOKS[story.look ?? DEFAULT_MOTION_LOOK];
   return [
     `# Build notes for ${slug}`,
     "",
-    "This folder follows the content-studio layout: one folder per piece. Start with the `content-studio` skill; it routes to the rest.",
+    "This folder follows the content-studio layout: one folder per piece. The story already passed Co-Create's words gate (anti-slop v1.2, reading time, every line traced to the piece).",
     "",
-    "1. Read `brief.md`, then `story.json`. The story already passed Co-Create's words gate (anti-slop v1.2, reading time, every line traced to the piece).",
-    "2. Brand: if `brand/` has no `brand.md` and `MOTION.md`, run `brand-intake` first.",
-    "3. Build in HyperFrames under `video/`. Run `export HYPERFRAMES_NO_TELEMETRY=1` before any HyperFrames command. Read `motion-doctrine` before composing and `cut-the-curve` for each `transitionOut`.",
-    "4. Generate the scenes from `story.json` (data first, as in gym-reel's `build_scenes.py`). Copy, times and seams are data. Never retype them.",
-    "5. Review with `motion-review-loop`: contact sheets at every beat, and check each beat's text is readable for its whole hold.",
-    "6. Deliver with `reel-export` (vertical) into `deliver/`, named as `brief.md` says.",
+    "1. Read `brief.md`, then `story.json`.",
+    "2. Build: `node work/motion-kit/build.mjs .` writes a HyperFrames project to `video/` in the story's look " +
+      `(${look.name}). Try another look with \`--look paper-ember|night-signal|riso-print --out video-<look>\`. Copy, times, seams and treatments are data; never retype them in \`video/\`.`,
+    "3. Check: `export HYPERFRAMES_NO_TELEMETRY=1`, then in `video/`: `npx --yes hyperframes@0.8.223 check --json` (0 errors) and the motion-doctrine seam gate on `video/ledger.json`.",
+    "4. Review with `motion-review-loop` or `npx hyperframes snapshot --review`: every beat readable for its whole hold, every cut carrying words across.",
+    `5. Sound with the \`sound-effects\` skill: \`video/cues.json\` is the cue list; the look suggests ${look.music.suggestion}. Check the licence page first.`,
+    "6. Render (`npx hyperframes render --quality delivery`), then deliver with `reel-export` into `deliver/`, named as `brief.md` says.",
     "",
     "Do not add numbers, names or claims that are not in `story.json`. Ask before using any paid service or uploading media.",
     ""
@@ -796,7 +925,7 @@ export function buildMotionPieceFolder(project: VideoProject, story: MotionStory
   const files: PieceFile[] = [
     { path: "story.json", content: JSON.stringify(storyContract(project, story), null, 2) + "\n" },
     { path: "brief.md", content: briefMarkdown(project, story, slug) },
-    { path: "CLAUDE.md", content: claudeMarkdown(slug) },
+    { path: "CLAUDE.md", content: claudeMarkdown(slug, story) },
     { path: "brand/.keep", content: "" },
     { path: "work/.keep", content: "" },
     { path: "video/.keep", content: "" },
@@ -808,6 +937,7 @@ export function buildMotionPieceFolder(project: VideoProject, story: MotionStory
   } else {
     files.push({ path: "source/.keep", content: "" });
   }
+  files.push(...motionKitFiles());
   return { folderName: slug, files };
 }
 

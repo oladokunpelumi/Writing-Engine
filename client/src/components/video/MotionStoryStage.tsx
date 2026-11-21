@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { CheckCircle2, Download, Film, RefreshCw, ShieldCheck, Type } from "lucide-react";
-import type { MotionBeat, MotionStory, MotionTransition, VideoProject } from "../../../../shared/src";
+import type { MotionBeat, MotionLookId, MotionStory, MotionTransition, MotionTreatment, VideoProject } from "../../../../shared/src";
+import { DEFAULT_MOTION_LOOK, MOTION_LOOKS, MOTION_LOOK_IDS, MOTION_TREATMENTS, MOTION_TREATMENT_NOTES } from "../../../../shared/src";
 
 // Kept in step with server/src/motionStory.ts.
 const WORDS_PER_SECOND = 3;
@@ -24,7 +25,7 @@ interface MotionStoryStageProps {
   project: VideoProject;
   busy: string;
   onRegenerate: (targetSeconds: 15 | 30 | 45 | 60, aspect: "9:16" | "1:1" | "16:9") => Promise<void>;
-  onSave: (beats: MotionBeat[], oneThing: string) => Promise<void>;
+  onSave: (beats: MotionBeat[], oneThing: string, look: MotionLookId) => Promise<void>;
   onCheck: () => Promise<void>;
   onApprove: () => Promise<void>;
   onDownload: () => Promise<void>;
@@ -34,17 +35,22 @@ export function MotionStoryStage({ project, busy, onRegenerate, onSave, onCheck,
   const story: MotionStory | undefined = project.motionStory;
   const [beats, setBeats] = useState<MotionBeat[]>(story?.beats ?? []);
   const [oneThing, setOneThing] = useState(story?.oneThing ?? "");
+  const [look, setLook] = useState<MotionLookId>(story?.look ?? DEFAULT_MOTION_LOOK);
   const [length, setLength] = useState<15 | 30 | 45 | 60>(nearestLength(story?.totalSeconds ?? 30));
   const [aspect, setAspect] = useState<"9:16" | "1:1" | "16:9">(story?.aspect ?? "9:16");
 
   useEffect(() => {
     setBeats(story?.beats ?? []);
     setOneThing(story?.oneThing ?? "");
+    setLook(story?.look ?? DEFAULT_MOTION_LOOK);
   }, [story?.id, story?.version, story?.updatedAt]);
 
   const dirty = useMemo(
-    () => JSON.stringify(beats) !== JSON.stringify(story?.beats ?? []) || oneThing !== (story?.oneThing ?? ""),
-    [beats, oneThing, story]
+    () =>
+      JSON.stringify(beats) !== JSON.stringify(story?.beats ?? []) ||
+      oneThing !== (story?.oneThing ?? "") ||
+      look !== (story?.look ?? DEFAULT_MOTION_LOOK),
+    [beats, oneThing, look, story]
   );
   const total = beats.length ? beats[beats.length - 1].end : 0;
   const gate = story?.wordsGate;
@@ -118,6 +124,38 @@ export function MotionStoryStage({ project, busy, onRegenerate, onSave, onCheck,
         <Timeline beats={beats} total={total} />
       </div>
 
+      <div className="rounded-xl border border-slate-200 p-4">
+        <p className="text-xs font-bold uppercase text-slate-500">Look</p>
+        <div className="mt-2 grid gap-2 sm:grid-cols-3">
+          {MOTION_LOOK_IDS.map((id) => {
+            const option = MOTION_LOOKS[id];
+            const chosen = look === id;
+            return (
+              <button
+                key={id}
+                type="button"
+                onClick={() => setLook(id)}
+                className={`rounded-lg border p-3 text-left transition ${chosen ? "border-indigo-600 ring-2 ring-indigo-200" : "border-slate-200 hover:border-slate-400"}`}
+                aria-pressed={chosen}
+              >
+                <div
+                  className="flex h-16 items-end justify-between rounded-md px-3 pb-2"
+                  style={{ background: option.palette.ground, color: option.palette.ink, fontFamily: `"${option.display.family}", sans-serif` }}
+                >
+                  <span className="text-2xl font-bold leading-none" style={{ textTransform: option.display.caps ? "uppercase" : "none" }}>
+                    Look <span style={{ color: option.palette.accentText }}>back</span>
+                  </span>
+                  <span className="mb-1 h-3 w-10 rounded-full" style={{ background: option.palette.accent }} />
+                </div>
+                <p className="mt-2 text-sm font-bold text-slate-800">{option.name}</p>
+                <p className="text-xs text-slate-500">{option.bestFor}</p>
+              </button>
+            );
+          })}
+        </div>
+        <p className="mt-2 text-xs text-slate-500">Music for this look: {MOTION_LOOKS[look].music.suggestion}. Changing the look or a treatment keeps the words check.</p>
+      </div>
+
       {story.hookCandidates.length > 1 ? (
         <div className="rounded-xl border border-slate-200 p-4">
           <p className="text-xs font-bold uppercase text-slate-500">Hook options (ranked by the Hook Lab scorer)</p>
@@ -167,6 +205,18 @@ export function MotionStoryStage({ project, busy, onRegenerate, onSave, onCheck,
                 value={beat.lines.join("\n")}
                 onChange={(event) => editBeat(index, { lines: event.target.value.split("\n") })}
               />
+              <label className="grid gap-1 text-xs text-slate-500">
+                Treatment
+                <select
+                  className="input w-auto py-1 text-xs"
+                  value={beat.treatment ?? ""}
+                  onChange={(event) => editBeat(index, { treatment: (event.target.value || undefined) as MotionTreatment | undefined })}
+                >
+                  <option value="">Look default ({MOTION_LOOKS[look].defaults[beat.role]})</option>
+                  {MOTION_TREATMENTS.map((treatment) => <option key={treatment} value={treatment}>{treatment}</option>)}
+                </select>
+                <span className="text-[11px] text-slate-400">{MOTION_TREATMENT_NOTES[beat.treatment ?? MOTION_LOOKS[look].defaults[beat.role]]}</span>
+              </label>
               <div className="grid gap-2 sm:grid-cols-2">
                 <label className="grid gap-1 text-xs text-slate-500">
                   Seam out
@@ -214,7 +264,7 @@ export function MotionStoryStage({ project, busy, onRegenerate, onSave, onCheck,
           <button
             className="btn btn-primary text-xs"
             disabled={Boolean(busy)}
-            onClick={() => onSave(beats.map((beat) => ({ ...beat, lines: beat.lines.map((line) => line.trim()).filter(Boolean) })), oneThing)}
+            onClick={() => onSave(beats.map((beat) => ({ ...beat, lines: beat.lines.map((line) => line.trim()).filter(Boolean) })), oneThing, look)}
           >
             Save edits
           </button>

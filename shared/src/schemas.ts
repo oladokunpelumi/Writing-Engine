@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { DEFAULT_MOTION_LOOK, MOTION_LOOK_IDS, MOTION_TREATMENTS } from "./motionLooks";
 
 export const isoDate = z.string().datetime().or(z.string().min(1));
 
@@ -1132,7 +1133,9 @@ export const MotionBeatSchema = ProductionSceneSchema.extend({
   emphasis: z.array(z.string()).default([]),
   transitionOut: MotionTransitionSchema.default("cut"),
   /** The sentence(s) of the piece this beat says. Must appear in the piece verbatim. */
-  sourceQuote: z.string().default("")
+  sourceQuote: z.string().default(""),
+  /** How the beat's key word is treated on screen. Unset: the look's default for the role. */
+  treatment: z.enum(MOTION_TREATMENTS).optional()
 });
 
 export const MotionGateBeatSchema = z.object({
@@ -1147,7 +1150,7 @@ export const MotionGateBeatSchema = z.object({
 
 export const MotionGateIssueSchema = z.object({
   sceneId: z.string(),
-  kind: z.enum(["reading-time", "density", "untraced-quote", "invented-figure", "slop", "hook-late"]),
+  kind: z.enum(["reading-time", "density", "untraced-quote", "invented-figure", "slop", "hook-late", "treatment"]),
   blocking: z.boolean(),
   message: z.string(),
   direction: z.string().default("")
@@ -1169,6 +1172,8 @@ export const MotionStorySchema = z.object({
   id: z.string(),
   version: z.number().int().min(1).default(1),
   lane: z.literal("kinetic-type").default("kinetic-type"),
+  /** The house look the film is built in (shared/src/motionLooks.ts). */
+  look: z.enum(MOTION_LOOK_IDS).default(DEFAULT_MOTION_LOOK),
   aspect: z.enum(["9:16", "1:1", "16:9"]).default("9:16"),
   fps: z.number().int().default(30),
   soundMode: z.enum(["silent-first", "music", "voiceover"]).default("silent-first"),
@@ -1198,11 +1203,13 @@ export const MotionStoryGenerateInputSchema = z.object({
   postId: z.string().optional(),
   targetSeconds: z.union([z.literal(15), z.literal(30), z.literal(45), z.literal(60)]).default(30),
   aspect: z.enum(["9:16", "1:1", "16:9"]).default("9:16"),
+  look: z.enum(MOTION_LOOK_IDS).optional(),
   externalAiConsent: z.boolean().optional()
 });
 
 export const MotionStoryUpdateInputSchema = z.object({
   beats: z.array(MotionBeatSchema).min(1).max(24),
+  look: z.enum(MOTION_LOOK_IDS).optional(),
   oneThing: z.string().max(400).optional(),
   title: z.string().max(300).optional()
 });

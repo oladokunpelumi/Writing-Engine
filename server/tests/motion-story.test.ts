@@ -20,6 +20,12 @@ import {
   toCardLines
 } from "../src/motionStory";
 import { buildExportPackage } from "../src/videoStudioV2";
+import { MOTION_LOOKS, MOTION_LOOK_IDS, MOTION_TREATMENTS, DEFAULT_MOTION_LOOK } from "../../shared/src";
+import { execFileSync } from "node:child_process";
+import { mkdirSync, mkdtempSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { dirname, join } from "node:path";
+import { suggestLook } from "../src/motionStory";
 
 const savedKey = process.env.OPENROUTER_API_KEY;
 beforeEach(() => {
@@ -176,8 +182,15 @@ describe("motion story — piece folder", () => {
       expect(paths).toContain(expected);
     }
 
-    const contract = JSON.parse(files.find((file) => file.path === "story.json")!.content);
-    expect(contract.contract).toBe("co-create.motion-story/1");
+    const text = (path: string) => String(files.find((file) => file.path === path)!.content);
+    const contract = JSON.parse(text("story.json"));
+    expect(contract.contract).toBe("co-create.motion-story/2");
+    expect(MOTION_LOOK_IDS).toContain(contract.look);
+    for (const beat of contract.beats) expect(MOTION_TREATMENTS).toContain(beat.treatment);
+    // The folder carries its own builder.
+    for (const kit of ["work/motion-kit/build.mjs", "work/motion-kit/runtime/kit.js", "work/motion-kit/looks.json", "work/motion-kit/assets/vendor/gsap.min.js"]) {
+      expect(paths).toContain(kit);
+    }
     expect(contract.canvas).toEqual({ width: 1080, height: 1920 });
     expect(contract.beats[0].startFrame).toBe(0);
     for (const beat of contract.beats) {
@@ -187,11 +200,13 @@ describe("motion story — piece folder", () => {
     expect(contract.totalFrames).toBe(Math.round(approved.totalSeconds * 30));
     expect(contract.gate.pass).toBe(true);
 
-    const brief = files.find((file) => file.path === "brief.md")!.content;
+    const brief = text("brief.md");
+    expect(brief).toContain("## Look");
     expect(brief).toContain("[NEEDS AUDIENCE]");
     expect(brief).toContain(approved.beats[0].lines.join(" "));
     expect(brief).toContain("_<platform>_9x16_");
-    expect(files.find((file) => file.path === "CLAUDE.md")!.content).toContain("HYPERFRAMES_NO_TELEMETRY=1");
+    expect(text("CLAUDE.md")).toContain("HYPERFRAMES_NO_TELEMETRY=1");
+    expect(text("CLAUDE.md")).toContain("node work/motion-kit/build.mjs .");
   });
 
   it("shows the motion story in the V2 export package", async () => {
@@ -226,5 +241,82 @@ describe("motion story — piece folder", () => {
     });
     const other = await ownerContext.run("erin", () => repo.listVideoProjects());
     expect(other).toHaveLength(0);
+  });
+});
+
+describe("motion story — looks and treatments", () => {
+  it("suggests a look from the piece's shape", () => {
+    expect(suggestLook(PIECE)).toBe("riso-print"); // three or more figures
+    const punchy = Array.from({ length: 8 }, (_, i) => `Short line number ${["one", "two", "three", "four", "five", "six", "seven", "eight"][i]} here.`).join(" ");
+    expect(suggestLook(punchy)).toBe("night-signal");
+    expect(suggestLook("A long, reflective sentence that wanders through an idea and takes its time getting anywhere at all, as essays do.")).toBe(DEFAULT_MOTION_LOOK);
+  });
+
+  it("drafts treatments: a figure counts, a negation strikes, the payoff holds still", async () => {
+    const { story } = await runMotionStory({ text: PIECE, targetSeconds: 45 });
+    expect(story.look).toBe("riso-print");
+    expect(story.beats.at(-1)?.treatment).toBe("still");
+    const proof = story.beats.find((beat) => beat.role === "proof");
+    expect(proof?.treatment).toBe("count");
+  });
+
+  it("keeps the approval when only the look or a treatment changes", async () => {
+    const { story } = await runMotionStory({ text: PIECE, targetSeconds: 30 });
+    const gate = await checkMotionWords({ story, pieceText: PIECE });
+    const approved = { ...story, wordsGate: gate, approved: true };
+    const restyled = applyMotionEdit(approved, {
+      beats: approved.beats.map((beat, i) => (i === 1 ? { ...beat, treatment: "circle" as const } : beat)),
+      look: "night-signal"
+    });
+    expect(restyled.look).toBe("night-signal");
+    expect(restyled.approved).toBe(true);
+    expect(approvalBlocker(restyled)).toBeUndefined();
+    const reworded = applyMotionEdit(approved, { beats: approved.beats.map((beat, i) => (i === 1 ? { ...beat, lines: ["Changed"] } : beat)) });
+    expect(reworded.approved).toBe(false);
+  });
+
+  it("notes treatments that cannot land, too many hits, and repeats", async () => {
+    const { story } = await runMotionStory({ text: PIECE, targetSeconds: 30, look: "paper-ember" });
+    const beats = story.beats.map((beat, i) => ({ ...beat, treatment: (i === 1 ? "stamp" : i < story.beats.length - 1 ? "slam" : "still") as never }));
+    const gate = await checkMotionWords({ story: applyMotionEdit(story, { beats }), pieceText: PIECE });
+    const notes = gate.issues.filter((issue) => issue.kind === "treatment");
+    expect(notes.length).toBeGreaterThan(0);
+    expect(notes.every((issue) => !issue.blocking)).toBe(true);
+    expect(notes.some((issue) => /slam or stamp/.test(issue.message))).toBe(true);
+  });
+
+  it("keeps motion-kit/looks.json in step with shared/src/motionLooks.ts", () => {
+    const kit = JSON.parse(readFileSync(join(__dirname, "..", "..", "motion-kit", "looks.json"), "utf8"));
+    expect(kit.looks).toEqual(JSON.parse(JSON.stringify(MOTION_LOOKS)));
+    expect(kit.treatments).toEqual([...MOTION_TREATMENTS]);
+  });
+
+  it("builds a HyperFrames project from an exported folder, in every look", async () => {
+    const { story } = await runMotionStory({ text: PIECE, title: "Approvals", targetSeconds: 30 });
+    const gate = await checkMotionWords({ story, pieceText: PIECE });
+    const { files } = buildMotionPieceFolder(project(), { ...story, wordsGate: gate, approved: true });
+    const dir = mkdtempSync(join(tmpdir(), "motion-folder-"));
+    for (const file of files) {
+      mkdirSync(dirname(join(dir, file.path)), { recursive: true });
+      writeFileSync(join(dir, file.path), file.content);
+    }
+    for (const look of MOTION_LOOK_IDS) {
+      execFileSync(process.execPath, [join(dir, "work", "motion-kit", "build.mjs"), dir, "--look", look, "--out", `video-${look}`]);
+      const out = join(dir, `video-${look}`);
+      expect(readdirSync(join(out, "compositions")).length).toBe(story.beats.length);
+      const ledger = JSON.parse(readFileSync(join(out, "ledger.json"), "utf8"));
+      expect(ledger.look).toBe(look);
+      expect(ledger.seams.length).toBe(story.beats.length - 1);
+      const cues = JSON.parse(readFileSync(join(out, "cues.json"), "utf8"));
+      expect(cues.filter((cue: { type: string }) => cue.type === "scene_cut").length).toBe(story.beats.length - 1);
+      const index = readFileSync(join(out, "index.html"), "utf8");
+      expect(index).toContain(MOTION_LOOKS[look].palette.ground);
+      // Copy is data: every on-screen word appears in a scene file.
+      const scenes = readdirSync(join(out, "compositions")).map((f) => readFileSync(join(out, "compositions", f), "utf8")).join("\n");
+      for (const beat of story.beats) for (const word of beat.lines.join(" ").split(/\s+/)) {
+        const shown = MOTION_LOOKS[look].display.caps ? word.toUpperCase() : word;
+        expect(scenes).toContain(shown.replace(/&/g, "&amp;"));
+      }
+    }
   });
 });
