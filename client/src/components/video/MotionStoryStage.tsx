@@ -399,7 +399,7 @@ function PicturesPanel({
         <div className="h-full bg-indigo-500" style={{ width: `${Math.min(100, (spent / budget) * 100)}%` }} />
       </div>
       <p className="text-xs text-slate-500">
-        {stills.length} picture{stills.length === 1 ? "" : "s"} planned ({pending} to generate), {icons} icon{icons === 1 ? "" : "s"}. Pictures carry no words; they are finished in the {MOTION_LOOKS[story.look ?? DEFAULT_MOTION_LOOK].name} style, and switching looks re-finishes them for free. Hero shots are made at build time from their still.
+        {stills.length} picture{stills.length === 1 ? "" : "s"} planned ({pending} to generate), {icons} icon{icons === 1 ? "" : "s"}. Pictures carry no words; they are finished in the {MOTION_LOOKS[story.look ?? DEFAULT_MOTION_LOOK].name} style, and switching looks re-finishes them for free. Hero shots are made at build time from their still (needs HyperFrames Pro); without one, the still plays instead.
       </p>
       <div className="flex flex-wrap gap-2">
         <button className="btn text-xs" disabled={Boolean(busy) || dirty} onClick={onPlan} title={dirty ? "Save your edits first" : ""}>Plan pictures</button>

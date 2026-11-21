@@ -876,7 +876,7 @@ export function storyContract(project: VideoProject, story: MotionStory) {
     pictures: {
       budgetUsd: story.visualBudgetUsd ?? DEFAULT_VISUAL_BUDGET_USD,
       spentUsd: story.visualSpendUsd ?? 0,
-      note: "Stills were made and finished in Co-Create. Hero shots: node work/motion-kit/shots.mjs . (uses what is left of the cap)."
+      note: "Stills were made and finished in Co-Create. Hero shots: node work/motion-kit/shots.mjs . (uses what is left of the cap; needs a HyperFrames Pro sign-in)."
     },
     rules: {
       wordsPerSecond: WORDS_PER_SECOND,

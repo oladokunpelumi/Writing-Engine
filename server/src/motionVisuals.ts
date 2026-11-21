@@ -176,7 +176,7 @@ const ART_DIRECTION: Record<string, string> = {
   "paper-ember":
     "Rendered as a fine ink engraving or etching: dense parallel hatching and cross-hatching, strong tonal contrast, black ink on warm off-white paper, no colour, timeless editorial illustration.",
   "night-signal":
-    "A cinematic night photograph: sodium-vapour street light, deep near-black shadows, warm amber highlights, wet asphalt, film grain, quiet and empty, shot on a 35 mm lens.",
+    "A cinematic low-light photograph: one warm practical light source, deep near-black shadows, warm amber highlights, film grain, quiet and still, shot on a 35 mm lens.",
   "riso-print":
     "Bold flat graphic shapes made for a two-colour risograph print: strong simple silhouettes, high contrast, minimal detail, generous negative space, cream paper."
 };
@@ -187,14 +187,15 @@ const RULES =
 export function buildStillPrompt(input: { look: MotionLook; visual: MotionVisual; beat: MotionBeat; oneThing: string }): string {
   const { look, visual, beat, oneThing } = input;
   const subject = visual.subject.trim() || keyWords(beat).slice(0, 3).join(", ");
+  const bare = subject.replace(/^(a|an|the|one)\s+/i, "");
   const frame =
     visual.placement === "plate"
       ? `A vertical 9:16 image of ${subject}. Keep the top 60% of the frame calm, simple and low in detail, because words will sit there; put the subject in the lower half.`
-      : `A single ${subject}, centred and isolated on a plain flat background in ${look.palette.ground}, filling about 70% of a square frame with even margins.`;
+      : `A single ${bare}, centred and isolated on a plain, flat, evenly coloured background in ${look.palette.ground} with no cast shadow, filling about 70% of a square frame with even margins.`;
   return [
     frame,
-    `It pictures this line from a personal essay: "${beat.sourceQuote.trim()}".`,
-    oneThing ? `The essay's point: "${oneThing.trim()}".` : "",
+    `It pictures this line from a personal essay: "${beat.sourceQuote.trim()}"`,
+    oneThing ? `The essay's point: "${oneThing.trim()}"` : "",
     ART_DIRECTION[look.id] ?? "",
     RULES
   ]
@@ -238,6 +239,21 @@ export async function finishForLook(input: Buffer, look: MotionLook, placement: 
     .raw()
     .toBuffer({ resolveWithObject: true });
   const out = Buffer.alloc(W * H * 3);
+
+  // Objects: key out the plain background (read from the border) so it becomes the
+  // look's ground in every look, whatever colour the picture was generated on.
+  // Without this a dark-ground object turns into a black square in a light look.
+  let mask: Buffer | undefined;
+  let bg = 0;
+  if (placement === "object") {
+    mask = await sharp(input).resize(W, H, { fit: "cover", position: "attention" }).removeAlpha().grayscale().normalise().blur(4).raw().toBuffer();
+    const ring: number[] = [];
+    const margin = Math.round(W * 0.03);
+    for (let y = 0; y < H; y += 3) for (let x = 0; x < W; x += 3) if (x < margin || y < margin || x >= W - margin || y >= H - margin) ring.push(mask[y * W + x]);
+    ring.sort((a, b) => a - b);
+    bg = ring[ring.length >> 1] / 255;
+  }
+
   const ground = hex(look.palette.ground);
   const ink = hex(look.palette.ink);
   const second = hex(look.palette.second);
@@ -280,6 +296,12 @@ export async function finishForLook(input: Buffer, look: MotionLook, placement: 
           const t = (l - 0.6) / 0.4;
           r = blend(mid[0], hi[0], t); g = blend(mid[1], hi[1], t); b = blend(mid[2], hi[2], t);
         }
+      }
+      if (mask) {
+        const k = smooth(0.07, 0.2, Math.abs(mask[i] / 255 - bg));
+        r = ground[0] + (r - ground[0]) * k;
+        g = ground[1] + (g - ground[1]) * k;
+        b = ground[2] + (b - ground[2]) * k;
       }
       const grain = look.id === "night-signal" ? 0 : (hash(x + 7, y + 3) - 0.5) * 0.035;
       out[i * 3] = Math.round(clamp01(r + grain) * 255);

@@ -91,6 +91,9 @@ describe("pictures — planning and prompts", () => {
     }
     const object = buildStillPrompt({ look: MOTION_LOOKS["riso-print"], visual: { ...beat.visual!, placement: "object" }, beat, oneThing: "" });
     expect(object).toContain(MOTION_LOOKS["riso-print"].palette.ground);
+    const laundry = buildStillPrompt({ look: MOTION_LOOKS["night-signal"], visual: { ...beat.visual!, placement: "object", subject: "a small pile of folded laundry" }, beat, oneThing: "x" });
+    expect(laundry).toContain("A single small pile of folded laundry");
+    expect(laundry).not.toMatch(/"\./);
   });
 });
 
@@ -109,6 +112,32 @@ describe("pictures — finishing in the look", () => {
       // The top-left corner (grey in the source) lands near the look's own colours, not the source's grey.
       const [r, g, b] = [data[0], data[1], data[2]];
       expect(Math.abs(r - g) + Math.abs(g - b) + Math.abs(r - b) > 4 || look.id === "paper-ember").toBe(true);
+    }
+  });
+
+  it("keys an object's plain background to the look's ground, dark or light, so it never shows as a square", async () => {
+    for (const background of ["#121212", "#EDEDED"]) {
+      const src = await sharp({ create: { width: 600, height: 600, channels: 3, background } })
+        .composite([{ input: Buffer.from('<svg xmlns="http://www.w3.org/2000/svg" width="600" height="600"><defs><linearGradient id="g"><stop offset="0" stop-color="#2a2a2a"/><stop offset="1" stop-color="#d0d0d0"/></linearGradient></defs><circle cx="300" cy="300" r="190" fill="url(#g)"/></svg>') }])
+        .png()
+        .toBuffer();
+      for (const look of Object.values(MOTION_LOOKS)) {
+        const { data } = await sharp(await finishForLook(src, look, "object")).raw().toBuffer({ resolveWithObject: true });
+        const ground = [1, 3, 5].map((i) => parseInt(look.palette.ground.slice(i, i + 2), 16));
+        for (const at of [0, (20 * 900 + 880) * 3]) {
+          for (let c = 0; c < 3; c++) expect(Math.abs(data[at + c] - ground[c])).toBeLessThan(12);
+        }
+        // The object itself is still drawn, not keyed away: across its middle band the
+        // pixels sit well off the ground on average.
+        let off = 0;
+        let n = 0;
+        for (let x = 200; x < 700; x += 2) {
+          const at = (450 * 900 + x) * 3;
+          off += [0, 1, 2].reduce((sum, c) => sum + Math.abs(data[at + c] - ground[c]), 0) / 3;
+          n += 1;
+        }
+        expect(off / n).toBeGreaterThan(15);
+      }
     }
   });
 });

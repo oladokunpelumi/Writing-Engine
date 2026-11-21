@@ -5,7 +5,8 @@
 //
 // For each beat whose picture is a hero video shot, takes the finished still
 // (assets/visuals/<beat>.png) as the first frame and asks HyperFrames to move it
-// (`media-use generate --type video`, your HyperFrames sign-in). Each shot is
+// (`media-use generate --type video`, your HyperFrames sign-in; generation is a
+// HyperFrames Pro feature, and the Free plan refuses it without charging). Each shot is
 // priced first with --plan; a shot that would pass what is left of the cap
 // (story.json pictures.budgetUsd - spentUsd - shots already made) is skipped.
 // Spend is kept in work/shots-spend.json. Then rebuild: node work/motion-kit/build.mjs .
@@ -62,7 +63,19 @@ for (const beat of story.beats) {
     continue;
   }
   mkdirSync(join(PIECE, "assets", "visuals"), { recursive: true });
-  cli(args);
+  try {
+    cli(args);
+  } catch (error) {
+    // A refused call (plan, credits) exits non-zero with JSON naming its fix; nothing is charged.
+    const text = `${error.stdout ?? ""}${error.stderr ?? ""}`;
+    let reason = text.trim().split("\n").slice(-3).join(" ");
+    try {
+      const j = JSON.parse(text.slice(text.indexOf("{")));
+      reason = [j.error, j.fix].filter(Boolean).join(" ");
+    } catch {}
+    console.log(`${beat.id}: HyperFrames did not make the shot. ${reason}`);
+    break;
+  }
   remaining -= usd;
   ledger.shots.push({ beat: beat.id, usd, seconds: Number(seconds), at: new Date().toISOString() });
   writeFileSync(ledgerPath, JSON.stringify(ledger, null, 2) + "\n");
