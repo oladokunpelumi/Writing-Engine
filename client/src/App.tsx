@@ -3268,6 +3268,8 @@ function VideoStudioView({
               onCheck={() => runStep("Checking the words", () => api.checkMotionStory(currentProject.id), updateProject)}
               onApprove={() => runStep("Approving the story", () => api.approveMotionStory(currentProject.id), updateProject)}
               onDownload={() => runStep("Building the piece folder", () => api.downloadMotionFolder(currentProject.id), () => undefined)}
+              onPlanPictures={() => runStep("Planning pictures", () => api.planMotionPictures(currentProject.id), updateProject)}
+              onGeneratePictures={() => runStep("Generating pictures", () => api.generateMotionPictures(currentProject.id), updateProject)}
             />
           )}
         </div>

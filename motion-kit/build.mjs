@@ -10,7 +10,7 @@
 // Copy, times and seams are data from story.json; never hand-edit them in video/.
 // Zero dependencies; Node 18+.
 
-import { copyFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -124,6 +124,13 @@ mkdirSync(join(OUT, "assets", "fonts"), { recursive: true });
 copyFileSync(join(KIT, "assets", "vendor", "gsap.min.js"), join(OUT, "assets", "vendor", "gsap.min.js"));
 copyFileSync(join(KIT, "runtime", "kit.js"), join(OUT, "assets", "kit.js"));
 if (look.display.file) copyFileSync(join(KIT, "assets", "fonts", look.display.file), join(OUT, "assets", "fonts", look.display.file));
+// Pictures made in Co-Create (finished stills, icons) and hero shots made by shots.mjs.
+const VISUALS = join(PIECE, "assets", "visuals");
+if (existsSync(VISUALS)) {
+  mkdirSync(join(OUT, "assets", "visuals"), { recursive: true });
+  for (const name of readdirSync(VISUALS)) copyFileSync(join(VISUALS, name), join(OUT, "assets", "visuals", name));
+}
+const hasFile = (rel) => Boolean(rel) && existsSync(join(PIECE, rel));
 
 const beats = story.beats;
 const ledger = { fps: FPS, look: look.id, seams: [] };
@@ -145,6 +152,24 @@ beats.forEach((beat, i) => {
   const marks = ["underline", "circle", "strike"].includes(treatment);
   const landed = ["slam", "stamp", "count"].includes(treatment);
   const plates = look.revealStyle === "print";
+  // The beat's picture, if it exists on disk.
+  const v = beat.visual && hasFile(beat.visual.file) ? beat.visual : null;
+  const isPlate = v && v.kind !== "icon" && v.placement === "plate";
+  const isObject = v && v.kind === "still" && v.placement === "object";
+  const isIcon = v && v.kind === "icon";
+  const video = v && v.video && hasFile(v.video.file) ? v.video : null;
+  const centreY = isObject || isIcon ? 540 : CENTRE_Y;
+  let mediaHtml = "";
+  if (isPlate) {
+    mediaHtml = `<div id="${id}-platewrap" class="platewrap"><img id="${id}-plate" class="plate" src="${v.file}" alt="" />${
+      video ? `<video id="${id}-video" class="clip plate" src="${video.file}" data-start="0" data-duration="${dur}" data-track-index="0" muted playsinline></video>` : ""
+    }</div>`;
+  } else if (isObject) {
+    mediaHtml = `<img id="${id}-object" class="object" src="${v.file}" alt="" />`;
+  } else if (isIcon) {
+    const svg = readFileSync(join(PIECE, v.file), "utf8").replace("<svg", `<svg id="${id}-icon" class="icon"`);
+    mediaHtml = svg;
+  }
 
   // Words with ids; the first emphasis word found is the treatment's target.
   let targetId = null;
@@ -220,6 +245,15 @@ beats.forEach((beat, i) => {
     tw.push(`tl.fromTo("#${id}-l1", { opacity: 1, filter: "blur(0px)" }, { opacity: 0.4, filter: "blur(5px)", duration: 0.35, ease: "power2.inOut" }, ${at});`);
     if (plates) tw.push(`tl.fromTo("#${id}-l1-b", { opacity: 1 }, { opacity: 0, duration: 0.35, ease: "power2.inOut" }, ${at});`);
   }
+  // Pictures move with purpose: a plate pushes in slowly for the whole beat; an
+  // object settles in as a secondary move; an icon draws itself on in the accent.
+  if (isPlate) tw.push(`tl.fromTo("#${id}-platewrap", { scale: 1 }, { scale: 1.06, duration: ${dur}, ease: "none" }, 0);`);
+  if (isObject) tw.push(`tl.fromTo("#${id}-object", { opacity: 0, scale: 0.94 }, { opacity: 1, scale: 1, duration: 0.5, ease: "power3.out" }, 0.25);`);
+  if (isIcon) {
+    tw.push(`tl.fromTo("#${id}-icon *", { strokeDasharray: 1, strokeDashoffset: 1 }, { strokeDashoffset: 0, duration: 0.7, ease: "power2.inOut", stagger: 0.08 }, 0.3);`);
+    cues.push({ t: r3(beat.start + 0.3), type: "hover_or_small_ui", desc: `icon ${v.icon} draws on` });
+  }
+
   const markAt = r3(tTarget + 0.2);
   const markDur = treatment === "circle" ? 0.6 : treatment === "strike" ? 0.35 : 0.5;
 
@@ -247,10 +281,16 @@ beats.forEach((beat, i) => {
     #${id} .accent { color:var(--accent-text); }
     #${id} .plate-b .accent-b { color:var(--accent); }
     #${id} .mark { position:absolute; overflow:visible; pointer-events:none; }
+    #${id} .platewrap { position:absolute; inset:0; overflow:hidden; transform-origin:50% 70%; }
+    #${id} .plate { position:absolute; inset:0; width:100%; height:100%; object-fit:cover; }
+    #${id} .object { position:absolute; left:${(W - 560) / 2}px; top:880px; width:560px; height:560px; object-fit:contain; }
+    #${id} .icon { position:absolute; left:${(W - 300) / 2}px; top:900px; width:300px; height:300px; overflow:visible; }
+    #${id} .icon * { stroke:var(--accent); stroke-width:1.6; fill:none; }
     #${id} .mark path { fill:none; stroke:var(--accent); stroke-width:${look.markStroke}; stroke-linecap:round; stroke-linejoin:round; vector-effect:non-scaling-stroke; }
   </style>
   <div id="${id}" data-composition-id="${id}" data-width="${W}" data-height="${H}">
     <div id="${id}-stage"${isPayoff ? ' data-hold="the payoff holds still to the last frame"' : ""}>
+      ${mediaHtml}
       <div id="${id}-shake">
         ${markup}
         ${markSvg}
@@ -266,7 +306,7 @@ beats.forEach((beat, i) => {
         const size = ${fit};
         const lh = size * ${look.display.lineHeight};
         const n = ${lines.length};
-        const top = Math.round(${CENTRE_Y} - (n * lh) / 2);
+        const top = Math.round(${centreY} - (n * lh) / 2);
         for (let l = 0; l < n; l++) {
           for (const suffix of ["", "-b"]) {
             const el = document.getElementById("${id}-l" + (l + 1) + suffix);

@@ -242,7 +242,7 @@ export const ImageAssetSchema = z.object({
   prompt: z.string(),
   url: z.string(),
   provider: z.enum(["mock", "openrouter"]),
-  role: z.enum(["cover", "section", "keyframe"]).optional(),
+  role: z.enum(["cover", "section", "keyframe", "motion-raw", "motion-still"]).optional(),
   style: z.string().optional(),
   caption: z.string().optional(),
   createdAt: isoDate
@@ -1123,6 +1123,36 @@ export const MotionTransitionSchema = z.enum([
   "rack-focus"
 ]);
 
+/**
+ * A beat's picture. Stills are generated in Co-Create and finished in the
+ * story's look; icons come from the Lucide set; a hero video shot starts from
+ * its finished still and is generated at build time (motion-kit/shots.mjs).
+ * Pictures never carry text: every word stays type.
+ */
+export const MotionVisualSchema = z.object({
+  kind: z.enum(["still", "video-shot", "icon"]),
+  /** plate: full frame behind the words. object: a single thing below the words. */
+  placement: z.enum(["plate", "object"]).default("plate"),
+  /** What to picture, in plain words. */
+  subject: z.string().default(""),
+  /** The prompt sent to the image model (built from the subject, the beat and the look). */
+  prompt: z.string().default(""),
+  /** Lucide icon name, for kind "icon". */
+  icon: z.string().optional(),
+  /** Camera move for a hero video shot. */
+  motion: z.string().default("slow push in"),
+  seconds: z.number().min(5).max(10).default(5),
+  status: z.enum(["planned", "generated", "failed", "over-budget"]).default("planned"),
+  rawImageId: z.string().optional(),
+  imageId: z.string().optional(),
+  /** The look the finished still was made for; a different look re-finishes from the raw image. */
+  finishedFor: z.string().optional(),
+  provider: z.enum(["mock", "openrouter"]).optional(),
+  model: z.string().optional(),
+  cost: z.number().default(0),
+  error: z.string().optional()
+});
+
 export const MotionBeatSchema = ProductionSceneSchema.extend({
   role: MotionBeatRoleSchema,
   start: z.number().min(0),
@@ -1135,7 +1165,8 @@ export const MotionBeatSchema = ProductionSceneSchema.extend({
   /** The sentence(s) of the piece this beat says. Must appear in the piece verbatim. */
   sourceQuote: z.string().default(""),
   /** How the beat's key word is treated on screen. Unset: the look's default for the role. */
-  treatment: z.enum(MOTION_TREATMENTS).optional()
+  treatment: z.enum(MOTION_TREATMENTS).optional(),
+  visual: MotionVisualSchema.optional()
 });
 
 export const MotionGateBeatSchema = z.object({
@@ -1189,6 +1220,9 @@ export const MotionStorySchema = z.object({
   sourcePostId: z.string().optional(),
   sourceTitle: z.string().default(""),
   wordsGate: MotionWordsGateSchema.optional(),
+  /** Spend cap for generated pictures and hero shots on this story, in USD. */
+  visualBudgetUsd: z.number().default(3),
+  visualSpendUsd: z.number().default(0),
   approved: z.boolean().default(false),
   approvedAt: isoDate.optional(),
   provider: z.enum(["mock", "openrouter"]).default("mock"),
@@ -1397,6 +1431,7 @@ export type MotionBeatRole = z.infer<typeof MotionBeatRoleSchema>;
 export type MotionTransition = z.infer<typeof MotionTransitionSchema>;
 export type MotionBeat = z.infer<typeof MotionBeatSchema>;
 export type MotionStory = z.infer<typeof MotionStorySchema>;
+export type MotionVisual = z.infer<typeof MotionVisualSchema>;
 export type MotionWordsGate = z.infer<typeof MotionWordsGateSchema>;
 export type MotionGateIssue = z.infer<typeof MotionGateIssueSchema>;
 export type MotionStoryGenerateInput = z.infer<typeof MotionStoryGenerateInputSchema>;

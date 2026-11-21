@@ -241,6 +241,14 @@ export const api = {
     }),
   checkMotionStory: (projectId: string) =>
     request<VideoProject>(`/api/video/projects/${projectId}/motion-story/check`, { method: "POST" }),
+  planMotionPictures: (projectId: string) =>
+    request<VideoProject>(`/api/video/projects/${projectId}/motion-story/visuals/plan`, { method: "POST" }),
+  generateMotionPictures: (projectId: string, sceneIds?: string[]) =>
+    request<VideoProject>(`/api/video/projects/${projectId}/motion-story/visuals/generate`, {
+      method: "POST",
+      headers: jsonHeaders,
+      body: JSON.stringify({ sceneIds })
+    }),
   approveMotionStory: (projectId: string) =>
     request<VideoProject>(`/api/video/projects/${projectId}/motion-story/approve`, { method: "POST" }),
   downloadMotionFolder: async (projectId: string) => {

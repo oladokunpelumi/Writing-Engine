@@ -49,6 +49,7 @@ import {
 import { adjudicateUnits, drivingFindings, type PieceUnit } from "./adjudicate";
 import { aiProvider, modelFor, parseJson, rawChat, systemPrompt } from "./openrouter";
 import { headlineScore } from "./quality";
+import { iconSvg, planMotionVisuals, DEFAULT_VISUAL_BUDGET_USD, MAX_STILLS } from "./motionVisuals";
 
 /** Moving type reads slower than a page: ~3 words a second, after the card settles. */
 export const WORDS_PER_SECOND = 3;
@@ -204,6 +205,8 @@ function titleFor(role: MotionBeatRole, index: number, roles: MotionBeatRole[]):
 interface RawBeat {
   role?: string;
   treatment?: string;
+  /** A concrete thing to picture for this beat (never text), proposed by the story model. */
+  picture?: string;
   seconds?: number;
   start?: number;
   end?: number;
@@ -456,9 +459,10 @@ export async function runMotionStory(input: {
       .join("\n\n");
     const user = [
       input.promptBody ??
-        'Return ONLY strict JSON: { "title", "oneThing", "hookCandidates": [3 lines], "beats": [{ "role", "seconds", "lines", "emphasis", "treatment", "visualAction", "transitionOut", "sourceQuote" }] }.',
+        'Return ONLY strict JSON: { "title", "oneThing", "hookCandidates": [3 lines], "beats": [{ "role", "seconds", "lines", "emphasis", "treatment", "picture", "visualAction", "transitionOut", "sourceQuote" }] }.',
       `Target length: ${targetSeconds} seconds. Aspect: ${aspect}. Use ${minBeats}-${maxBeats} beats.`,
       `Look: ${MOTION_LOOKS[look].name} (${MOTION_LOOKS[look].medium}).`,
+      `Give each beat a "picture": one concrete thing or scene a viewer could see that carries the beat (an object, a place, a moment), never words, a chart or a real person. Pictures are chosen for 2-4 beats later; the payoff stays words.`,
       `Give each beat a "treatment" for its emphasis word, one of: ${MOTION_TREATMENTS.map((t) => `${t} (${MOTION_TREATMENT_NOTES[t]})`).join("; ")}. Use slam or stamp on at most a third of the beats, never the same mark three beats running, and "still" for the payoff.`,
       `<PIECE title="${(input.title ?? "").replace(/"/g, "'")}">\n${input.text.slice(0, 24_000)}\n</PIECE>`
     ].join("\n\n");
@@ -477,6 +481,10 @@ export async function runMotionStory(input: {
     cost = usage?.cost ?? 0;
   }
 
+  // normalizeBeats drops beats with no lines; keep picture hints aligned with the survivors.
+  const pictureHints = draft.beats
+    .filter((beat) => (Array.isArray(beat.lines) ? beat.lines : String(beat.lines ?? "").split(/\n|\s\/\s/)).some((line) => String(line).trim()))
+    .map((beat) => (typeof beat.picture === "string" ? beat.picture : undefined));
   let beats = normalizeBeats(draft.beats, targetSeconds);
 
   // The Hook Lab's scorer picks the opening card. The model's own hook competes
@@ -511,12 +519,16 @@ export async function runMotionStory(input: {
     totalSeconds: beats[beats.length - 1].end,
     sourcePostId: input.sourcePostId,
     sourceTitle: input.title ?? draft.title,
+    visualBudgetUsd: input.previous?.visualBudgetUsd ?? DEFAULT_VISUAL_BUDGET_USD,
+    visualSpendUsd: input.previous?.visualSpendUsd ?? 0,
     approved: false,
     provider,
     cost,
     createdAt: input.previous?.createdAt ?? now,
     updatedAt: now
   };
+  // Plan pictures now (free); generating them is a separate, capped step.
+  story.beats = planMotionVisuals(story, pictureHints);
   return { story, cost };
 }
 
@@ -694,6 +706,32 @@ export async function checkMotionWords(input: { story: MotionStory; pieceText: s
     }
   }
 
+  // Pictures: notes only.
+  const pictured = story.beats.filter((beat) => beat.visual && beat.visual.kind !== "icon");
+  if (pictured.length > MAX_STILLS) {
+    issues.push({
+      sceneId: pictured[MAX_STILLS].sceneId,
+      kind: "treatment",
+      blocking: false,
+      message: pictured.length + " beats have pictures; " + MAX_STILLS + " is the most a reel carries well.",
+      direction: "Let some beats be words only; the eye needs somewhere to rest."
+    });
+  }
+  for (const beat of pictured) {
+    if (beat.role === "payoff") {
+      issues.push({ sceneId: beat.sceneId, kind: "treatment", blocking: false, message: beat.title + ": the payoff has a picture.", direction: "Keep the payoff as words alone." });
+    }
+    if (beat.visual?.status !== "generated") {
+      issues.push({
+        sceneId: beat.sceneId,
+        kind: "treatment",
+        blocking: false,
+        message: beat.title + ": its picture is planned but not generated, so the build will show words only.",
+        direction: "Generate pictures before exporting, or remove the plan."
+      });
+    }
+  }
+
   // Anti-slop v1.2 on every card, judged in its own register.
   const units: PieceUnit[] = story.beats.map((beat) => ({
     text: beat.lines.join(" "),
@@ -780,6 +818,26 @@ export function slugify(value: string): string {
 }
 
 /** The machine contract a motion build reads. Frames are exact at the story's fps. */
+/** The picture as the build sees it: only pictures that exist (a generated still, or an icon). */
+function exportedVisual(beat: MotionBeat) {
+  const v = beat.visual;
+  if (!v) return undefined;
+  if (v.kind === "icon" && v.icon) return { kind: "icon", placement: "object", icon: v.icon, file: "assets/visuals/" + beat.sceneId + ".svg" };
+  if ((v.kind === "still" || v.kind === "video-shot") && v.status === "generated" && v.imageId) {
+    return {
+      kind: v.kind,
+      placement: v.kind === "video-shot" ? "plate" : v.placement,
+      subject: v.subject,
+      file: "assets/visuals/" + beat.sceneId + ".png",
+      video:
+        v.kind === "video-shot"
+          ? { file: "assets/visuals/" + beat.sceneId + ".mp4", prompt: v.motion + ", keep the exact style, colours and grain of the first frame, no text", seconds: v.seconds }
+          : undefined
+    };
+  }
+  return undefined;
+}
+
 export function storyContract(project: VideoProject, story: MotionStory) {
   const canvas = CANVAS[story.aspect];
   return {
@@ -805,15 +863,21 @@ export function storyContract(project: VideoProject, story: MotionStory) {
       endFrame: Math.round(beat.end * story.fps),
       lines: beat.lines,
       emphasis: beat.emphasis,
-      visual: beat.visualAction,
+      motionNote: beat.visualAction,
       transitionOut: beat.transitionOut,
       treatment: resolveTreatment(
         MOTION_LOOKS[story.look ?? DEFAULT_MOTION_LOOK],
         beat.treatment ?? MOTION_LOOKS[story.look ?? DEFAULT_MOTION_LOOK].defaults[beat.role],
         beat.emphasis
       ),
-      sourceQuote: beat.sourceQuote
+      sourceQuote: beat.sourceQuote,
+      visual: exportedVisual(beat)
     })),
+    pictures: {
+      budgetUsd: story.visualBudgetUsd ?? DEFAULT_VISUAL_BUDGET_USD,
+      spentUsd: story.visualSpendUsd ?? 0,
+      note: "Stills were made and finished in Co-Create. Hero shots: node work/motion-kit/shots.mjs . (uses what is left of the cap)."
+    },
     rules: {
       wordsPerSecond: WORDS_PER_SECOND,
       settleSeconds: SETTLE_SECONDS,
@@ -838,6 +902,20 @@ export function storyContract(project: VideoProject, story: MotionStory) {
       approvedAt: story.approvedAt
     }
   };
+}
+
+function picturesLines(story: MotionStory): string[] {
+  const lines = story.beats
+    .filter((beat) => beat.visual)
+    .map((beat) => {
+      const v = beat.visual!;
+      if (v.kind === "icon") return "- " + beat.title + ": icon " + v.icon + " (Lucide), drawn on in the look's accent.";
+      const state = v.status === "generated" ? "assets/visuals/" + beat.sceneId + ".png" : "not generated (" + v.status + ")";
+      return "- " + beat.title + ": " + (v.kind === "video-shot" ? "hero video shot from a " : "") + v.placement + " picture of " + v.subject + ", " + state + ".";
+    });
+  if (!lines.length) lines.push("- None: a words-only reel.");
+  lines.push("- Picture spend so far: $" + (story.visualSpendUsd ?? 0).toFixed(2) + " of a $" + (story.visualBudgetUsd ?? 3).toFixed(2) + " cap (stills and hero shots together).");
+  return lines;
 }
 
 function briefMarkdown(project: VideoProject, story: MotionStory, slug: string): string {
@@ -874,6 +952,9 @@ function briefMarkdown(project: VideoProject, story: MotionStory, slug: string):
     `- Ground \`${look.palette.ground}\`, ink \`${look.palette.ink}\`, accent \`${look.palette.accent}\` (as text \`${look.palette.accentText}\`), second ink \`${look.palette.second}\`.`,
     `- Type: ${look.display.family} ${look.display.weight}${look.display.caps ? ", caps" : ""}.`,
     `- Music: ${look.music.mood}. Suggested: ${look.music.suggestion}. Check the licence page before export.`,
+    "",
+    "## Pictures",
+    ...picturesLines(story),
     "",
     "## Structure",
     "| Time | Beat | On screen | Treatment | Seam out |",
@@ -920,7 +1001,11 @@ function claudeMarkdown(slug: string, story: MotionStory): string {
  * the build notes, the piece itself under source/ (never written to), and the
  * empty stage folders the motion pack expects.
  */
-export function buildMotionPieceFolder(project: VideoProject, story: MotionStory): { folderName: string; files: PieceFile[] } {
+export function buildMotionPieceFolder(
+  project: VideoProject,
+  story: MotionStory,
+  stills: Record<string, Buffer> = {}
+): { folderName: string; files: PieceFile[] } {
   const slug = slugify(story.title || project.title);
   const files: PieceFile[] = [
     { path: "story.json", content: JSON.stringify(storyContract(project, story), null, 2) + "\n" },
@@ -936,6 +1021,11 @@ export function buildMotionPieceFolder(project: VideoProject, story: MotionStory
     files.push({ path: "source/piece.md", content: project.sourceText.trim() + "\n" });
   } else {
     files.push({ path: "source/.keep", content: "" });
+  }
+  for (const beat of story.beats) {
+    const v = beat.visual;
+    if (v?.kind === "icon" && v.icon) files.push({ path: "assets/visuals/" + beat.sceneId + ".svg", content: iconSvg(v.icon) + "\n" });
+    else if (v && v.status === "generated" && stills[beat.sceneId]) files.push({ path: "assets/visuals/" + beat.sceneId + ".png", content: stills[beat.sceneId] });
   }
   files.push(...motionKitFiles());
   return { folderName: slug, files };

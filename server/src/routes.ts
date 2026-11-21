@@ -115,6 +115,7 @@ import {
   pieceTextFor,
   runMotionStory
 } from "./motionStory";
+import { generateMotionStills, planMotionVisuals, refinishMotionStills } from "./motionVisuals";
 
 export function createRouter(repo: Repository) {
   const router = express.Router();
@@ -1265,7 +1266,10 @@ export function createRouter(repo: Repository) {
         return;
       }
       const edit = MotionStoryUpdateInputSchema.parse(req.body);
-      res.json(await repo.saveVideoProject({ id: project.id, motionStory: applyMotionEdit(project.motionStory, edit) }));
+      let story = applyMotionEdit(project.motionStory, edit);
+      // A new look re-finishes stored pictures from their raw images: no generation, no cost.
+      if (story.look !== project.motionStory.look) story = { ...story, beats: await refinishMotionStills(story, repo) };
+      res.json(await repo.saveVideoProject({ id: project.id, motionStory: story }));
     } catch (error) {
       next(error);
     }
@@ -1288,6 +1292,54 @@ export function createRouter(repo: Repository) {
           // Keep updatedAt: the gate result is fresh for exactly this version.
           motionStory: { ...project.motionStory, wordsGate: gate, approved: false, approvedAt: undefined },
           cost: (project.cost ?? 0) + gate.cost
+        })
+      );
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  router.post("/video/projects/:id/motion-story/visuals/plan", async (req, res, next) => {
+    try {
+      const project = await loadProject(req.params.id, res);
+      if (!project) return;
+      if (!project.motionStory) {
+        res.status(400).json({ error: "Generate a motion story first" });
+        return;
+      }
+      // Re-planning keeps every picture the writer already has; it only fills gaps.
+      const beats = planMotionVisuals(project.motionStory);
+      res.json(await repo.saveVideoProject({ id: project.id, motionStory: { ...project.motionStory, beats } }));
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  router.post("/video/projects/:id/motion-story/visuals/generate", async (req, res, next) => {
+    try {
+      const project = await loadProject(req.params.id, res);
+      if (!project) return;
+      if (!project.motionStory) {
+        res.status(400).json({ error: "Generate a motion story first" });
+        return;
+      }
+      requireExternalAiConsent(project);
+      const sceneIds = Array.isArray(req.body?.sceneIds) ? req.body.sceneIds.map(String) : undefined;
+      const result = await generateMotionStills({ story: project.motionStory, repo, sceneIds });
+      const before = new Map(project.motionStory.beats.map((beat) => [beat.sceneId, beat.visual?.imageId]));
+      let added = 0;
+      for (const beat of result.beats) {
+        const v = beat.visual;
+        if (v?.imageId && v.imageId !== before.get(beat.sceneId) && v.provider && v.model) {
+          await recordImageCost(repo, { prompt: v.prompt, provider: v.provider, model: v.model, cost: v.cost });
+          added += v.cost ?? 0;
+        }
+      }
+      res.json(
+        await repo.saveVideoProject({
+          id: project.id,
+          motionStory: { ...project.motionStory, beats: result.beats, visualSpendUsd: result.spent },
+          cost: (project.cost ?? 0) + added
         })
       );
     } catch (error) {
@@ -1323,7 +1375,14 @@ export function createRouter(repo: Repository) {
         res.status(409).json({ error: "Approve the story (after the words check passes) before exporting it" });
         return;
       }
-      const folder = buildMotionPieceFolder(project, project.motionStory);
+      const stills: Record<string, Buffer> = {};
+      for (const beat of project.motionStory.beats) {
+        const imageId = beat.visual?.status === "generated" ? beat.visual.imageId : undefined;
+        if (!imageId) continue;
+        const blob = await repo.getImageBlob(imageId);
+        if (blob) stills[beat.sceneId] = blob.data;
+      }
+      const folder = buildMotionPieceFolder(project, project.motionStory, stills);
       if (req.query.format === "json") {
         // Binary kit files (fonts, GSAP) are listed by size, not inlined.
         res.json({

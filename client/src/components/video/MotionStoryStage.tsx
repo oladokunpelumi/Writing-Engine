@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { CheckCircle2, Download, Film, RefreshCw, ShieldCheck, Type } from "lucide-react";
-import type { MotionBeat, MotionLookId, MotionStory, MotionTransition, MotionTreatment, VideoProject } from "../../../../shared/src";
+import type { MotionBeat, MotionLookId, MotionStory, MotionTransition, MotionTreatment, MotionVisual, VideoProject } from "../../../../shared/src";
 import { DEFAULT_MOTION_LOOK, MOTION_LOOKS, MOTION_LOOK_IDS, MOTION_TREATMENTS, MOTION_TREATMENT_NOTES } from "../../../../shared/src";
 
 // Kept in step with server/src/motionStory.ts.
@@ -29,9 +29,11 @@ interface MotionStoryStageProps {
   onCheck: () => Promise<void>;
   onApprove: () => Promise<void>;
   onDownload: () => Promise<void>;
+  onPlanPictures: () => Promise<void>;
+  onGeneratePictures: () => Promise<void>;
 }
 
-export function MotionStoryStage({ project, busy, onRegenerate, onSave, onCheck, onApprove, onDownload }: MotionStoryStageProps) {
+export function MotionStoryStage({ project, busy, onRegenerate, onSave, onCheck, onApprove, onDownload, onPlanPictures, onGeneratePictures }: MotionStoryStageProps) {
   const story: MotionStory | undefined = project.motionStory;
   const [beats, setBeats] = useState<MotionBeat[]>(story?.beats ?? []);
   const [oneThing, setOneThing] = useState(story?.oneThing ?? "");
@@ -156,6 +158,8 @@ export function MotionStoryStage({ project, busy, onRegenerate, onSave, onCheck,
         <p className="mt-2 text-xs text-slate-500">Music for this look: {MOTION_LOOKS[look].music.suggestion}. Changing the look or a treatment keeps the words check.</p>
       </div>
 
+      <PicturesPanel story={story} busy={busy} dirty={dirty} onPlan={onPlanPictures} onGenerate={onGeneratePictures} />
+
       {story.hookCandidates.length > 1 ? (
         <div className="rounded-xl border border-slate-200 p-4">
           <p className="text-xs font-bold uppercase text-slate-500">Hook options (ranked by the Hook Lab scorer)</p>
@@ -217,6 +221,7 @@ export function MotionStoryStage({ project, busy, onRegenerate, onSave, onCheck,
                 </select>
                 <span className="text-[11px] text-slate-400">{MOTION_TREATMENT_NOTES[beat.treatment ?? MOTION_LOOKS[look].defaults[beat.role]]}</span>
               </label>
+              <PictureRow beat={beat} onChange={(visual) => editBeat(index, { visual })} />
               <div className="grid gap-2 sm:grid-cols-2">
                 <label className="grid gap-1 text-xs text-slate-500">
                   Seam out
@@ -295,6 +300,113 @@ export function MotionStoryStage({ project, busy, onRegenerate, onSave, onCheck,
           The folder follows the content-studio layout (brief.md, story.json, CLAUDE.md, source/, brand/, video/, review/, deliver/). Unzip it and open Claude Code in it to build the reel in HyperFrames.
         </p>
       ) : null}
+    </div>
+  );
+}
+
+type PictureChoice = "none" | "plate" | "object" | "icon" | "video-shot";
+
+function pictureChoice(beat: MotionBeat): PictureChoice {
+  const v = beat.visual;
+  if (!v) return "none";
+  if (v.kind === "icon") return "icon";
+  if (v.kind === "video-shot") return "video-shot";
+  return v.placement === "object" ? "object" : "plate";
+}
+
+function PictureRow({ beat, onChange }: { beat: MotionBeat; onChange: (visual: MotionVisual | undefined) => void }) {
+  const v = beat.visual;
+  const choice = pictureChoice(beat);
+  const setChoice = (next: PictureChoice) => {
+    if (next === "none") return onChange(undefined);
+    const base: MotionVisual = {
+      kind: next === "icon" ? "icon" : next === "video-shot" ? "video-shot" : "still",
+      placement: next === "object" ? "object" : next === "icon" ? "object" : "plate",
+      subject: v?.subject ?? "",
+      prompt: "",
+      icon: next === "icon" ? v?.icon ?? "" : undefined,
+      motion: v?.motion ?? "slow push in",
+      seconds: v?.seconds ?? 5,
+      status: next === "icon" ? "generated" : "planned",
+      cost: 0
+    };
+    // Keep a generated still when only its placement changes.
+    if (v && v.kind !== "icon" && next !== "icon" && v.imageId && (next === "video-shot" || v.placement === base.placement)) {
+      onChange({ ...v, kind: base.kind, placement: base.placement });
+    } else onChange(base);
+  };
+  return (
+    <div className="rounded-lg bg-slate-50 p-2 grid gap-2">
+      <div className="flex flex-wrap items-center gap-2 text-xs text-slate-500">
+        <span className="font-bold uppercase">Picture</span>
+        <select className="input w-auto py-1 text-xs" value={choice} onChange={(event) => setChoice(event.target.value as PictureChoice)}>
+          <option value="none">None (words only)</option>
+          <option value="plate">Still behind the words</option>
+          <option value="object">Object below the words</option>
+          <option value="icon">Icon (Lucide)</option>
+          <option value="video-shot">Hero video shot</option>
+        </select>
+        {v && v.kind !== "icon" ? <span className={v.status === "generated" ? "text-tide" : v.status === "failed" || v.status === "over-budget" ? "text-ember" : ""}>{v.status}</span> : null}
+      </div>
+      {v && v.kind === "icon" ? (
+        <div className="flex items-center gap-2">
+          <input className="input py-1 text-xs" placeholder="lucide icon name, e.g. weight" value={v.icon ?? ""} onChange={(event) => onChange({ ...v, icon: event.target.value.trim().toLowerCase(), subject: event.target.value })} />
+          {v.icon ? <img src={`/api/icons/${encodeURIComponent(v.icon)}`} alt="" className="h-8 w-8" /> : null}
+        </div>
+      ) : null}
+      {v && v.kind !== "icon" ? (
+        <div className="flex items-start gap-2">
+          <label className="grid flex-1 gap-1 text-xs text-slate-500">
+            What to picture (no words in pictures)
+            <input className="input py-1 text-xs" value={v.subject} onChange={(event) => onChange({ ...v, subject: event.target.value, status: v.imageId ? v.status : "planned" })} />
+            {v.kind === "video-shot" ? (
+              <input className="input py-1 text-xs" value={v.motion} onChange={(event) => onChange({ ...v, motion: event.target.value })} title="Camera move for the hero shot" />
+            ) : null}
+            {v.error ? <span className="text-ember">{v.error}</span> : null}
+          </label>
+          {v.imageId ? <img src={`/api/images/${v.imageId}`} alt="" className="h-28 rounded object-cover" style={{ aspectRatio: v.placement === "object" ? "1 / 1" : "9 / 16" }} /> : null}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+function PicturesPanel({
+  story,
+  busy,
+  dirty,
+  onPlan,
+  onGenerate
+}: {
+  story: MotionStory;
+  busy: string;
+  dirty: boolean;
+  onPlan: () => Promise<void>;
+  onGenerate: () => Promise<void>;
+}) {
+  const stills = story.beats.filter((beat) => beat.visual && beat.visual.kind !== "icon");
+  const pending = stills.filter((beat) => beat.visual?.status !== "generated").length;
+  const icons = story.beats.filter((beat) => beat.visual?.kind === "icon").length;
+  const budget = story.visualBudgetUsd ?? 3;
+  const spent = story.visualSpendUsd ?? 0;
+  return (
+    <div className="rounded-xl border border-slate-200 p-4 grid gap-2">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <p className="text-xs font-bold uppercase text-slate-500">Pictures</p>
+        <span className="text-xs text-slate-500">${spent.toFixed(2)} of ${budget.toFixed(2)} cap</span>
+      </div>
+      <div className="h-1.5 w-full overflow-hidden rounded bg-slate-100">
+        <div className="h-full bg-indigo-500" style={{ width: `${Math.min(100, (spent / budget) * 100)}%` }} />
+      </div>
+      <p className="text-xs text-slate-500">
+        {stills.length} picture{stills.length === 1 ? "" : "s"} planned ({pending} to generate), {icons} icon{icons === 1 ? "" : "s"}. Pictures carry no words; they are finished in the {MOTION_LOOKS[story.look ?? DEFAULT_MOTION_LOOK].name} style, and switching looks re-finishes them for free. Hero shots are made at build time from their still.
+      </p>
+      <div className="flex flex-wrap gap-2">
+        <button className="btn text-xs" disabled={Boolean(busy) || dirty} onClick={onPlan} title={dirty ? "Save your edits first" : ""}>Plan pictures</button>
+        <button className="btn btn-primary text-xs" disabled={Boolean(busy) || dirty || pending === 0} onClick={onGenerate} title={dirty ? "Save your edits first" : ""}>
+          Generate {pending || ""} picture{pending === 1 ? "" : "s"}
+        </button>
+      </div>
     </div>
   );
 }

@@ -7,6 +7,7 @@ import { fileURLToPath } from "node:url";
 import { openDatabase } from "./db";
 import { Repository } from "./repository";
 import { createRouter } from "./routes";
+import { iconExists, iconSvg } from "./motionVisuals";
 
 async function main() {
   const app = express();
@@ -26,6 +27,18 @@ async function main() {
   // Generated images live in Postgres (image_assets.data bytea). Serve them
   // publicly by id (unguessable uuid) so <img> tags and exported markdown resolve
   // without auth. Mounted before the API router.
+  // Lucide icons (ISC) for picture previews; public, like the icon set itself.
+  app.get("/api/icons/:name", (req, res) => {
+    const name = String(req.params.name).replace(/\.svg$/, "");
+    if (!iconExists(name)) {
+      res.status(404).end();
+      return;
+    }
+    res.setHeader("Content-Type", "image/svg+xml");
+    res.setHeader("Cache-Control", "public, max-age=86400");
+    res.send(iconSvg(name, "#111827", 2));
+  });
+
   app.get("/api/images/:id", async (req, res, next) => {
     try {
       const blob = await repo.getImageBlob(req.params.id);

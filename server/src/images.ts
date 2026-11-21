@@ -99,6 +99,11 @@ function imageCost(raw: { usage?: { cost?: number }; cost?: number }, model: str
   return IMAGE_COST_ESTIMATES[model];
 }
 
+/** What one image is expected to cost on a model, for spend caps checked before the call. */
+export function estimateImageCost(model = imageModel()): number {
+  return imageCost({}, model) ?? 0.08;
+}
+
 export async function generateImage(
   prompt: string,
   model = imageModel()
