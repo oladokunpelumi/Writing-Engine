@@ -19,7 +19,7 @@ import { dirname, join } from "node:path";
 import sharp from "sharp";
 import type { MotionBeat, MotionLook, MotionStory, MotionVisual } from "../../shared/src";
 import { DEFAULT_MOTION_LOOK, MOTION_LOOKS } from "../../shared/src";
-import { estimateImageCost, generateImage, imageModel } from "./images";
+import { estimateImageCost, generateImage, resolveImageRoute, type ImageProvider } from "./images";
 import type { Repository } from "./repository";
 
 export const MIN_STILLS = 2;
@@ -392,7 +392,7 @@ function dataUrlToBuffer(url: string): Buffer {
   throw new Error("Image came back in an unexpected format");
 }
 
-async function storePng(repo: Repository, png: Buffer, meta: { prompt: string; provider: "mock" | "openrouter"; role: "motion-raw" | "motion-still"; caption: string; style: string }) {
+async function storePng(repo: Repository, png: Buffer, meta: { prompt: string; provider: ImageProvider; role: "motion-raw" | "motion-still"; caption: string; style: string }) {
   return repo.saveImage({ url: `data:image/png;base64,${png.toString("base64")}`, ...meta });
 }
 
@@ -408,11 +408,12 @@ export interface StillsResult {
  * done yet, finish it in the story's look, and store raw and finished images.
  * A beat is skipped, not generated, when it would take spend past the cap.
  */
-export async function generateMotionStills(input: { story: MotionStory; repo: Repository; sceneIds?: string[]; model?: string }): Promise<StillsResult> {
+export async function generateMotionStills(input: { story: MotionStory; repo: Repository; sceneIds?: string[]; model?: string; provider?: ImageProvider }): Promise<StillsResult> {
   const { story, repo } = input;
   const look = MOTION_LOOKS[story.look ?? DEFAULT_MOTION_LOOK];
   const budget = story.visualBudgetUsd ?? DEFAULT_VISUAL_BUDGET_USD;
-  const model = input.model ?? imageModel();
+  // Throws a clear message when the writer picked a provider that is not set up.
+  const route = resolveImageRoute(input.model, input.provider);
   let spent = story.visualSpendUsd ?? 0;
   let generated = 0;
   let skipped = 0;
@@ -424,7 +425,7 @@ export async function generateMotionStills(input: { story: MotionStory; repo: Re
       beats.push(beat);
       continue;
     }
-    const estimate = process.env.OPENROUTER_API_KEY ? estimateImageCost(model) : 0;
+    const estimate = route.provider === "mock" ? 0 : estimateImageCost(route.model);
     if (spent + estimate > budget + 1e-9) {
       beats.push({ ...beat, visual: { ...v, status: "over-budget", error: `Would pass the $${budget.toFixed(2)} cap for this story.` } });
       skipped += 1;
@@ -432,7 +433,7 @@ export async function generateMotionStills(input: { story: MotionStory; repo: Re
     }
     const prompt = buildStillPrompt({ look, visual: v, beat, oneThing: story.oneThing });
     try {
-      const image = await generateImage(prompt, model);
+      const image = await generateImage(prompt, route.model, { provider: route.provider });
       const cost = image.cost ?? estimate;
       spent += cost;
       const raw = await sharp(dataUrlToBuffer(image.url)).png().toBuffer();

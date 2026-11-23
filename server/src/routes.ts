@@ -103,7 +103,7 @@ import {
   buildExportPackage
 } from "./videoStudioV2";
 import { analyzeReference, runVideoScript, runVideoShots, suggestPersonas } from "./videoStudio";
-import { anchorImageModel, generateImage } from "./images";
+import { anchorImageModel, defaultImageProvider, generateImage, imageProviders, type ImageProvider } from "./images";
 import { HEADLINE_DOCTRINE, HOOK_DOCTRINE, HOOK_STYLES, hookStyleDirective } from "../../shared/src";
 import { designPartnerReadiness } from "./readiness";
 import AdmZip from "adm-zip";
@@ -1315,6 +1315,11 @@ export function createRouter(repo: Repository) {
     }
   });
 
+  // Which picture providers are set up, for the Pictures panel's choice.
+  router.get("/image-providers", (_req, res) => {
+    res.json({ default: defaultImageProvider(), providers: imageProviders() });
+  });
+
   router.post("/video/projects/:id/motion-story/visuals/generate", async (req, res, next) => {
     try {
       const project = await loadProject(req.params.id, res);
@@ -1325,7 +1330,15 @@ export function createRouter(repo: Repository) {
       }
       requireExternalAiConsent(project);
       const sceneIds = Array.isArray(req.body?.sceneIds) ? req.body.sceneIds.map(String) : undefined;
-      const result = await generateMotionStills({ story: project.motionStory, repo, sceneIds });
+      const provider = req.body?.provider === "cloudflare" || req.body?.provider === "openrouter" ? (req.body.provider as ImageProvider) : undefined;
+      let result;
+      try {
+        result = await generateMotionStills({ story: project.motionStory, repo, sceneIds, provider });
+      } catch (error) {
+        // A provider the writer picked that is not set up: say so plainly.
+        res.status(400).json({ error: error instanceof Error ? error.message : String(error) });
+        return;
+      }
       const before = new Map(project.motionStory.beats.map((beat) => [beat.sceneId, beat.visual?.imageId]));
       let added = 0;
       for (const beat of result.beats) {
@@ -2684,9 +2697,9 @@ async function saveGeneration(
 // IMAGE_COST_USD estimate (undefined → shows in History without a $ figure).
 async function recordImageCost(
   repo: Repository,
-  image: { prompt: string; provider: "mock" | "openrouter"; model: string; cost?: number }
+  image: { prompt: string; provider: ImageProvider; model: string; cost?: number }
 ) {
-  if (image.provider !== "openrouter") return;
+  if (image.provider === "mock") return;
   await repo.createGenerationRecord({
     stage: "image",
     content: image.prompt,

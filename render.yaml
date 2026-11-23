@@ -45,6 +45,11 @@ services:
         value: cost-first
       - key: MODEL_IMAGE
         value: google/gemini-3-pro-image
+      # Optional free pictures via Cloudflare Workers AI (set both to enable).
+      - key: CLOUDFLARE_ACCOUNT_ID
+        sync: false
+      - key: CLOUDFLARE_API_TOKEN
+        sync: false
       - key: MODEL_SWARM
         value: google/gemini-3.1-flash-lite
       - key: EMBED_MODEL

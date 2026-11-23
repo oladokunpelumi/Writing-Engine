@@ -1,6 +1,8 @@
-// Image generation via OpenRouter's dedicated images endpoint
-// (POST /api/v1/images → { data: [{ b64_json }] }). Replaces the old approach of
-// regex-grepping a URL out of a chat completion (which images don't return).
+// Image generation. Two real providers:
+//   OpenRouter's dedicated images endpoint (POST /api/v1/images → { data: [{ b64_json }] }),
+//   Cloudflare Workers AI (POST /accounts/{id}/ai/run/{model} → { result: { image } }),
+//     FLUX.1 [schnell] by default, inside Cloudflare's free daily allowance.
+// Without either key, images are offline placeholders (mock).
 
 // Image models are tiered by MODEL_PROFILE like every text stage (they were not,
 // which is why cost-first still billed the premium tier). Rates are per output
@@ -20,8 +22,62 @@ const IMAGE_COST_ESTIMATES: Record<string, number> = {
   "google/gemini-3-pro-image-preview": 0.155,
   "google/gemini-3.1-flash-image": 0.077,
   "google/gemini-3.1-flash-lite-image": 0.039,
-  "google/gemini-2.5-flash-image": 0.039
+  "google/gemini-2.5-flash-image": 0.039,
+  // ~96 neurons for a 1024x1024, 8-step image at $0.011 per 1,000 neurons. Free inside
+  // Cloudflare's 10,000-neuron daily allowance; this is the price past it, so caps stay honest.
+  "@cf/black-forest-labs/flux-1-schnell": 0.0011
 };
+
+export type ImageProvider = "mock" | "openrouter" | "cloudflare";
+
+const CLOUDFLARE_DEFAULT_MODEL = "@cf/black-forest-labs/flux-1-schnell";
+
+export function cloudflareConfigured(): boolean {
+  return Boolean(process.env.CLOUDFLARE_ACCOUNT_ID && process.env.CLOUDFLARE_API_TOKEN);
+}
+
+export function cloudflareImageModel(): string {
+  return process.env.MODEL_IMAGE_CLOUDFLARE || CLOUDFLARE_DEFAULT_MODEL;
+}
+
+/** The provider used when a caller does not pick one: IMAGE_PROVIDER if it is set up, else OpenRouter, else Cloudflare, else mock. */
+export function defaultImageProvider(): ImageProvider {
+  const pick = process.env.IMAGE_PROVIDER;
+  if ((pick === "cloudflare" || process.env.MODEL_IMAGE?.startsWith("@cf/")) && cloudflareConfigured()) return "cloudflare";
+  if (pick === "openrouter" && process.env.OPENROUTER_API_KEY) return "openrouter";
+  if (process.env.OPENROUTER_API_KEY) return "openrouter";
+  if (cloudflareConfigured()) return "cloudflare";
+  return "mock";
+}
+
+/** What a writer can choose between, for the picture controls. */
+export function imageProviders(): Array<{ id: "openrouter" | "cloudflare"; label: string; model: string; configured: boolean; free: boolean }> {
+  return [
+    { id: "openrouter", label: "OpenRouter", model: imageModel(), configured: Boolean(process.env.OPENROUTER_API_KEY), free: false },
+    { id: "cloudflare", label: "Cloudflare FLUX", model: cloudflareImageModel(), configured: cloudflareConfigured(), free: true }
+  ];
+}
+
+/**
+ * Pick the provider and a model it can run. An explicit provider must be set up
+ * (else a clear error); a "@cf/" model means Cloudflare; otherwise the default.
+ * A model id meant for the other provider is swapped for this provider's default.
+ */
+export function resolveImageRoute(model?: string, provider?: ImageProvider): { provider: ImageProvider; model: string } {
+  const chosen: ImageProvider = provider ?? (model?.startsWith("@cf/") ? "cloudflare" : defaultImageProvider());
+  if (chosen === "cloudflare") {
+    if (!cloudflareConfigured()) {
+      if (provider === "cloudflare") throw new Error("Cloudflare pictures are not set up: add CLOUDFLARE_ACCOUNT_ID and CLOUDFLARE_API_TOKEN.");
+      return { provider: "mock", model: model ?? cloudflareImageModel() };
+    }
+    return { provider: "cloudflare", model: model?.startsWith("@cf/") ? model : cloudflareImageModel() };
+  }
+  if (chosen === "openrouter") {
+    if (!process.env.OPENROUTER_API_KEY) throw new Error("OpenRouter pictures are not set up: add OPENROUTER_API_KEY.");
+    return { provider: "openrouter", model: model && !model.startsWith("@cf/") ? model : imageModel() };
+  }
+  return { provider: "mock", model: model ?? imageModel() };
+}
 
 function imageProfile(): keyof typeof IMAGE_TIERS {
   const value = process.env.MODEL_PROFILE;
@@ -104,13 +160,45 @@ export function estimateImageCost(model = imageModel()): number {
   return imageCost({}, model) ?? 0.08;
 }
 
+async function generateCloudflareImage(prompt: string, model: string): Promise<{ url: string; provider: "cloudflare"; model: string; cost?: number }> {
+  const base = process.env.CLOUDFLARE_API_BASE ?? "https://api.cloudflare.com/client/v4";
+  const account = encodeURIComponent(process.env.CLOUDFLARE_ACCOUNT_ID ?? "");
+  const body: Record<string, unknown> = { prompt: prompt.slice(0, 2048) };
+  if (model.includes("flux-1-schnell")) body.steps = 8; // the model's maximum; best detail
+  const response = await fetch(`${base}/accounts/${account}/ai/run/${model}`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${process.env.CLOUDFLARE_API_TOKEN}`, "Content-Type": "application/json" },
+    body: JSON.stringify(body)
+  });
+  const text = await response.text();
+  let data: { result?: { image?: string }; errors?: Array<{ code?: number; message?: string }> } | undefined;
+  try {
+    data = JSON.parse(text);
+  } catch {
+    data = undefined;
+  }
+  const image = data?.result?.image;
+  if (!response.ok || !image) {
+    const errors = data?.errors ?? [];
+    if (errors.some((e) => e.code === 4006 || /daily free allocation|neurons/i.test(e.message ?? ""))) {
+      throw new Error("Cloudflare's free daily picture allowance is used up; it resets at 00:00 UTC.");
+    }
+    const detail = errors.map((e) => `${e.code ?? ""} ${e.message ?? ""}`.trim()).join("; ") || text.slice(0, 300);
+    throw new Error(`Cloudflare image generation failed: ${response.status} ${detail}`);
+  }
+  // FLUX.1 [schnell] returns a base64 JPEG.
+  return { url: `data:image/jpeg;base64,${image}`, provider: "cloudflare", model, cost: imageCost({}, model) };
+}
+
 export async function generateImage(
   prompt: string,
-  model = imageModel()
-): Promise<{ url: string; provider: "mock" | "openrouter"; model: string; cost?: number }> {
-  if (!process.env.OPENROUTER_API_KEY) {
-    return { url: mockImage(prompt), provider: "mock", model };
-  }
+  model?: string,
+  options: { provider?: ImageProvider } = {}
+): Promise<{ url: string; provider: ImageProvider; model: string; cost?: number }> {
+  const route = resolveImageRoute(model, options.provider);
+  if (route.provider === "mock") return { url: mockImage(prompt), provider: "mock", model: route.model };
+  if (route.provider === "cloudflare") return generateCloudflareImage(prompt, route.model);
+  model = route.model;
   const response = await fetch(`${process.env.OPENROUTER_BASE_URL ?? "https://openrouter.ai/api/v1"}/images`, {
     method: "POST",
     headers: headers(),

@@ -241,7 +241,7 @@ export const ImageAssetSchema = z.object({
   postId: z.string().optional(),
   prompt: z.string(),
   url: z.string(),
-  provider: z.enum(["mock", "openrouter"]),
+  provider: z.enum(["mock", "openrouter", "cloudflare"]),
   role: z.enum(["cover", "section", "keyframe", "motion-raw", "motion-still"]).optional(),
   style: z.string().optional(),
   caption: z.string().optional(),
@@ -639,7 +639,7 @@ export const GenerationRecordSchema = z.object({
   id: z.string(),
   stage: PromptStageSchema,
   content: z.string(),
-  provider: z.enum(["mock", "openrouter"]),
+  provider: z.enum(["mock", "openrouter", "cloudflare"]),
   model: z.string(),
   promptVersionId: z.string().optional(),
   brief: BriefInputSchema.optional(),
@@ -1147,7 +1147,7 @@ export const MotionVisualSchema = z.object({
   imageId: z.string().optional(),
   /** The look the finished still was made for; a different look re-finishes from the raw image. */
   finishedFor: z.string().optional(),
-  provider: z.enum(["mock", "openrouter"]).optional(),
+  provider: z.enum(["mock", "openrouter", "cloudflare"]).optional(),
   model: z.string().optional(),
   cost: z.number().default(0),
   error: z.string().optional()
@@ -1306,7 +1306,7 @@ export const VideoProjectSchema = z.object({
         visualPrompt: z.string(),
         keyframeUrl: z.string(),
         status: z.enum(["pending", "completed", "failed"]).optional(),
-        provider: z.enum(["mock", "openrouter"]).optional(),
+        provider: z.enum(["mock", "openrouter", "cloudflare"]).optional(),
         cost: z.number().optional(),
         error: z.string().optional()
       })

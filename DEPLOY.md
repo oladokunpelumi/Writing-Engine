@@ -72,6 +72,8 @@ the local pglite database to disk (otherwise it's in-memory).
 | `INVITE_CODE` | Required to register. Rotate anytime to stop new signups. |
 | `JWT_SECRET` | Signs session tokens. |
 | `OPENROUTER_API_KEY` | Your key — this is the spend. |
+| `CLOUDFLARE_ACCOUNT_ID`, `CLOUDFLARE_API_TOKEN` | Optional. Free pictures from Cloudflare Workers AI (FLUX.1 schnell, daily allowance). Set both; the Pictures panel then offers it. Token: dashboard > My Profile > API Tokens > "Workers AI" template. |
+| `IMAGE_PROVIDER` | Optional `cloudflare` to make every image default to Cloudflare (covers, keyframes, motion pictures). |
 | `MAX_OUTPUT_TOKENS` | Caps output tokens per call (cost guardrail). |
 | `MODEL_*` | Per-stage model routing (any OpenRouter slug). |
 | `MODEL_VIDEO_INGEST` | Optional multimodal OCR model override. |

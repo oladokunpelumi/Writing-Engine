@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useState } from "react";
 import { CheckCircle2, Download, Film, RefreshCw, ShieldCheck, Type } from "lucide-react";
 import type { MotionBeat, MotionLookId, MotionStory, MotionTransition, MotionTreatment, MotionVisual, VideoProject } from "../../../../shared/src";
 import { DEFAULT_MOTION_LOOK, MOTION_LOOKS, MOTION_LOOK_IDS, MOTION_TREATMENTS, MOTION_TREATMENT_NOTES } from "../../../../shared/src";
+import { api, type ImageProviderId, type ImageProviders } from "../../api";
 
 // Kept in step with server/src/motionStory.ts.
 const WORDS_PER_SECOND = 3;
@@ -30,7 +31,7 @@ interface MotionStoryStageProps {
   onApprove: () => Promise<void>;
   onDownload: () => Promise<void>;
   onPlanPictures: () => Promise<void>;
-  onGeneratePictures: () => Promise<void>;
+  onGeneratePictures: (provider?: ImageProviderId) => Promise<void>;
 }
 
 export function MotionStoryStage({ project, busy, onRegenerate, onSave, onCheck, onApprove, onDownload, onPlanPictures, onGeneratePictures }: MotionStoryStageProps) {
@@ -382,8 +383,25 @@ function PicturesPanel({
   busy: string;
   dirty: boolean;
   onPlan: () => Promise<void>;
-  onGenerate: () => Promise<void>;
+  onGenerate: (provider?: ImageProviderId) => Promise<void>;
 }) {
+  const [providers, setProviders] = useState<ImageProviders | null>(null);
+  const [provider, setProvider] = useState<ImageProviderId | undefined>(undefined);
+  useEffect(() => {
+    let live = true;
+    api
+      .imageProviders()
+      .then((value) => {
+        if (!live) return;
+        setProviders(value);
+        if (value.default !== "mock") setProvider(value.default);
+      })
+      .catch(() => undefined);
+    return () => {
+      live = false;
+    };
+  }, []);
+  const ready = providers?.providers.filter((p) => p.configured) ?? [];
   const stills = story.beats.filter((beat) => beat.visual && beat.visual.kind !== "icon");
   const pending = stills.filter((beat) => beat.visual?.status !== "generated").length;
   const icons = story.beats.filter((beat) => beat.visual?.kind === "icon").length;
@@ -403,7 +421,18 @@ function PicturesPanel({
       </p>
       <div className="flex flex-wrap gap-2">
         <button className="btn text-xs" disabled={Boolean(busy) || dirty} onClick={onPlan} title={dirty ? "Save your edits first" : ""}>Plan pictures</button>
-        <button className="btn btn-primary text-xs" disabled={Boolean(busy) || dirty || pending === 0} onClick={onGenerate} title={dirty ? "Save your edits first" : ""}>
+        {ready.length > 1 ? (
+          <select className="input w-auto py-1 text-xs" value={provider} onChange={(event) => setProvider(event.target.value as ImageProviderId)} aria-label="Picture provider">
+            {ready.map((p) => (
+              <option key={p.id} value={p.id}>
+                {p.label}{p.free ? " (free daily allowance)" : ""}
+              </option>
+            ))}
+          </select>
+        ) : ready.length === 1 ? (
+          <span className="self-center text-xs text-slate-500">via {ready[0].label}{ready[0].free ? " (free daily allowance)" : ""}</span>
+        ) : null}
+        <button className="btn btn-primary text-xs" disabled={Boolean(busy) || dirty || pending === 0} onClick={() => onGenerate(provider)} title={dirty ? "Save your edits first" : ""}>
           Generate {pending || ""} picture{pending === 1 ? "" : "s"}
         </button>
       </div>

@@ -74,6 +74,12 @@ export function getToken() {
   return authToken;
 }
 
+export type ImageProviderId = "openrouter" | "cloudflare";
+export interface ImageProviders {
+  default: ImageProviderId | "mock";
+  providers: Array<{ id: ImageProviderId; label: string; model: string; configured: boolean; free: boolean }>;
+}
+
 async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   const headers = new Headers(init.headers ?? {});
   if (authToken) headers.set("Authorization", `Bearer ${authToken}`);
@@ -243,12 +249,13 @@ export const api = {
     request<VideoProject>(`/api/video/projects/${projectId}/motion-story/check`, { method: "POST" }),
   planMotionPictures: (projectId: string) =>
     request<VideoProject>(`/api/video/projects/${projectId}/motion-story/visuals/plan`, { method: "POST" }),
-  generateMotionPictures: (projectId: string, sceneIds?: string[]) =>
+  generateMotionPictures: (projectId: string, options: { sceneIds?: string[]; provider?: ImageProviderId } = {}) =>
     request<VideoProject>(`/api/video/projects/${projectId}/motion-story/visuals/generate`, {
       method: "POST",
       headers: jsonHeaders,
-      body: JSON.stringify({ sceneIds })
+      body: JSON.stringify(options)
     }),
+  imageProviders: () => request<ImageProviders>("/api/image-providers"),
   approveMotionStory: (projectId: string) =>
     request<VideoProject>(`/api/video/projects/${projectId}/motion-story/approve`, { method: "POST" }),
   downloadMotionFolder: async (projectId: string) => {
