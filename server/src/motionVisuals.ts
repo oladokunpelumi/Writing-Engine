@@ -302,7 +302,7 @@ export async function finishForLook(input: Buffer, look: MotionLook, placement: 
     .normalise()
     .raw()
     .toBuffer({ resolveWithObject: true });
-  const out = Buffer.alloc(W * H * 3);
+  const out = Buffer.alloc(W * H * (placement === "object" ? 4 : 3));
 
   // Objects: key out the backdrop so it becomes the look's ground in every look,
   // whatever colour it was generated on (else a dark-ground object is a black square
@@ -322,6 +322,7 @@ export async function finishForLook(input: Buffer, look: MotionLook, placement: 
       const i = y * W + x;
       const lum = data[i] / 255;
       let r: number, g: number, b: number;
+      let edgeAlpha = 0;
       if (look.id === "paper-ember") {
         // Engraving: parallel lines whose width follows the darkness.
         const t = (Math.sin(((x * 0.34 + y * 0.94) * 2 * Math.PI) / 7) + 1) / 2;
@@ -361,17 +362,22 @@ export async function finishForLook(input: Buffer, look: MotionLook, placement: 
         const kx = alpha[y * W + Math.min(W - 1, x + 2)] - alpha[y * W + Math.max(0, x - 2)];
         const ky = alpha[Math.min(H - 1, y + 2) * W + x] - alpha[Math.max(0, y - 2) * W + x];
         const edge = smooth(0.25, 0.6, Math.abs(kx) + Math.abs(ky)) * (look.id === "night-signal" ? 0.6 : 0.85);
+        edgeAlpha = edge > 0 ? Math.min(1, edge / 0.6) : 0;
         r += (line[0] - r) * edge;
         g += (line[1] - g) * edge;
         b += (line[2] - b) * edge;
       }
       const grain = look.id === "night-signal" ? 0 : (hash(x + 7, y + 3) - 0.5) * 0.035;
-      out[i * 3] = Math.round(clamp01(r + grain) * 255);
-      out[i * 3 + 1] = Math.round(clamp01(g + grain) * 255);
-      out[i * 3 + 2] = Math.round(clamp01(b + grain) * 255);
+      const ch = alpha ? 4 : 3;
+      out[i * ch] = Math.round(clamp01(r + grain) * 255);
+      out[i * ch + 1] = Math.round(clamp01(g + grain) * 255);
+      out[i * ch + 2] = Math.round(clamp01(b + grain) * 255);
+      // Objects are cut out: transparent around the object and its outline, so they sit
+      // on the reel's own canvas (grain, texture) instead of a tile of flat ground.
+      if (alpha) out[i * 4 + 3] = Math.round(clamp01(Math.max(alpha[i], edgeAlpha)) * 255);
     }
   }
-  return sharp(out, { raw: { width: W, height: H, channels: 3 } }).png({ compressionLevel: 9 }).toBuffer();
+  return sharp(out, { raw: { width: W, height: H, channels: placement === "object" ? 4 : 3 } }).png({ compressionLevel: 9 }).toBuffer();
 }
 
 // ---------------------------------------------------------------------------

@@ -112,7 +112,7 @@ describe("pictures — finishing in the look", () => {
       const plate = await sharp(await finishForLook(src, look, "plate")).metadata();
       expect([plate.width, plate.height]).toEqual([1080, 1920]);
       const objectPng = await finishForLook(src, look, "object");
-      const { data, info } = await sharp(objectPng).raw().toBuffer({ resolveWithObject: true });
+      const { data, info } = await sharp(objectPng).removeAlpha().raw().toBuffer({ resolveWithObject: true });
       expect([info.width, info.height]).toEqual([900, 900]);
       // The top-left corner (grey in the source) lands near the look's own colours, not the source's grey.
       const [r, g, b] = [data[0], data[1], data[2]];
@@ -126,7 +126,7 @@ describe("pictures — finishing in the look", () => {
       .png()
       .toBuffer();
     for (const look of Object.values(MOTION_LOOKS)) {
-      const { data } = await sharp(await finishForLook(src, look, "object")).raw().toBuffer({ resolveWithObject: true });
+      const { data } = await sharp(await finishForLook(src, look, "object")).removeAlpha().raw().toBuffer({ resolveWithObject: true });
       const ground = [1, 3, 5].map((i) => parseInt(look.palette.ground.slice(i, i + 2), 16));
       const off = (x: number, y: number) => [0, 1, 2].reduce((sum, c) => sum + Math.abs(data[(y * 900 + x) * 3 + c] - ground[c]), 0) / 3;
       // Scan the middle row: the shadow (left of the white card) is ground; the card's edges are drawn.
@@ -139,13 +139,28 @@ describe("pictures — finishing in the look", () => {
     }
   });
 
+  it("cuts objects out: transparent around them, opaque on them", async () => {
+    const src = await sharp({ create: { width: 1024, height: 1024, channels: 3, background: "#00B140" } })
+      .composite([{ input: Buffer.from('<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024"><rect x="380" y="380" width="300" height="240" fill="#f4f4f2"/></svg>') }])
+      .png()
+      .toBuffer();
+    for (const look of Object.values(MOTION_LOOKS)) {
+      const { data, info } = await sharp(await finishForLook(src, look, "object")).raw().toBuffer({ resolveWithObject: true });
+      expect(info.channels).toBe(4);
+      expect(data[3]).toBe(0); // corner
+      expect(data[(450 * 900 + 450) * 4 + 3]).toBe(255); // centre of the object
+    }
+    const plate = await sharp(await finishForLook(src, MOTION_LOOKS["paper-ember"], "plate")).metadata();
+    expect(plate.channels).toBe(3); // plates stay opaque
+  });
+
   it("trims a small object so it fills its slot, whatever size the model drew it", async () => {
     const src = await sharp({ create: { width: 1024, height: 1024, channels: 3, background: "#d8d8d8" } })
       .composite([{ input: Buffer.from('<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024"><rect x="440" y="560" width="150" height="110" fill="#3a4a60"/></svg>') }])
       .png()
       .toBuffer();
     const look = MOTION_LOOKS["paper-ember"]; // a dark object draws as ink here
-    const { data } = await sharp(await finishForLook(src, look, "object")).raw().toBuffer({ resolveWithObject: true });
+    const { data } = await sharp(await finishForLook(src, look, "object")).removeAlpha().raw().toBuffer({ resolveWithObject: true });
     const ground = [1, 3, 5].map((i) => parseInt(look.palette.ground.slice(i, i + 2), 16));
     let drawn = 0;
     for (let x = 0; x < 900; x++) {
@@ -162,7 +177,7 @@ describe("pictures — finishing in the look", () => {
         .png()
         .toBuffer();
       for (const look of Object.values(MOTION_LOOKS)) {
-        const { data } = await sharp(await finishForLook(src, look, "object")).raw().toBuffer({ resolveWithObject: true });
+        const { data } = await sharp(await finishForLook(src, look, "object")).removeAlpha().raw().toBuffer({ resolveWithObject: true });
         const ground = [1, 3, 5].map((i) => parseInt(look.palette.ground.slice(i, i + 2), 16));
         for (const at of [0, (20 * 900 + 880) * 3]) {
           for (let c = 0; c < 3; c++) expect(Math.abs(data[at + c] - ground[c])).toBeLessThan(12);
