@@ -411,7 +411,7 @@ function PicturesPanel({
     <div className="rounded-xl border border-slate-200 p-4 grid gap-2">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <p className="text-xs font-bold uppercase text-slate-500">Pictures</p>
-        <span className="text-xs text-slate-500">${spent.toFixed(2)} of ${budget.toFixed(2)} cap</span>
+        <span className="text-xs text-slate-500">{spent > 0 && spent < 0.01 ? "<$0.01" : `$${spent.toFixed(2)}`} of ${budget.toFixed(2)} cap</span>
       </div>
       <div className="h-1.5 w-full overflow-hidden rounded bg-slate-100">
         <div className="h-full bg-indigo-500" style={{ width: `${Math.min(100, (spent / budget) * 100)}%` }} />

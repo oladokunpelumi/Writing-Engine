@@ -1309,7 +1309,8 @@ export function createRouter(repo: Repository) {
       }
       // Re-planning keeps every picture the writer already has; it only fills gaps.
       const beats = planMotionVisuals(project.motionStory);
-      res.json(await repo.saveVideoProject({ id: project.id, motionStory: { ...project.motionStory, beats } }));
+      // A new updatedAt tells the stage to take the server's beats (it keeps a local editing copy).
+      res.json(await repo.saveVideoProject({ id: project.id, motionStory: { ...project.motionStory, beats, updatedAt: new Date().toISOString() } }));
     } catch (error) {
       next(error);
     }
@@ -1351,7 +1352,7 @@ export function createRouter(repo: Repository) {
       res.json(
         await repo.saveVideoProject({
           id: project.id,
-          motionStory: { ...project.motionStory, beats: result.beats, visualSpendUsd: result.spent },
+          motionStory: { ...project.motionStory, beats: result.beats, visualSpendUsd: result.spent, updatedAt: new Date().toISOString() },
           cost: (project.cost ?? 0) + added
         })
       );
