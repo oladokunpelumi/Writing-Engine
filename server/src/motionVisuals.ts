@@ -2,8 +2,9 @@
 //
 //   planMotionVisuals   — choose 2-4 beats for generated stills (at most one
 //                         hero video shot) and icons where a key word matches.
-//   buildStillPrompt    — subject + the beat's own sentence + the look's art
-//                         direction + fixed rules (no text, no real faces).
+//   buildStillPrompt    — subject + the beat's own sentence + an evenly lit,
+//                         look-neutral photo direction + fixed rules (no text,
+//                         no real faces). The look comes from finishing.
 //   finishForLook       — bake the still into the look's medium: an ink
 //                         engraving for Paper & Ember, a two-plate halftone for
 //                         Riso Print, an asphalt-to-amber duotone for Night
@@ -172,31 +173,34 @@ export function planMotionVisuals(story: MotionStory, hints: Array<string | unde
 // Prompts
 // ---------------------------------------------------------------------------
 
-const ART_DIRECTION: Record<string, string> = {
-  "paper-ember":
-    "Rendered as a fine ink engraving or etching: dense parallel hatching and cross-hatching, strong tonal contrast, black ink on warm off-white paper, no colour, timeless editorial illustration.",
-  "night-signal":
-    "A cinematic low-light photograph: one warm practical light source, deep near-black shadows, warm amber highlights, film grain, quiet and still, shot on a 35 mm lens.",
-  "riso-print":
-    "Bold flat graphic shapes made for a two-colour risograph print: strong simple silhouettes, high contrast, minimal detail, generous negative space, cream paper."
-};
+// One raw picture serves every look: the finishing pass (engraving, halftone,
+// duotone) gives the look its mood. So the raw asks for an evenly lit photograph
+// with a full range of tones, never a dark, low-key one: a night photo turns into
+// solid ink in the light looks, and a spotlight pool becomes a blot around objects.
+const RAW_DIRECTION =
+  "A clean, evenly lit photograph with soft directional light and a full range of tones: the subject clearly lit and separated from a simple background, mid-tone surroundings, no deep black areas, no blown highlights, no vignette, no spotlight pool, sharp focus.";
+
+// Objects are drawn on a green screen: the finishing pass keys by colour, so the
+// backdrop and any shadow on it become the look's ground, and light objects survive.
+const OBJECT_BACKDROP = "a flat, solid, evenly lit chroma-key green backdrop (#00B140), like a green screen, with no cast shadow and no green on the object";
 
 const RULES =
   "No text, letters, numbers, signs, labels, logos, watermarks or interface elements anywhere in the image. No real or recognisable people; if a person appears, show them from behind or as a silhouette. Not a chart, graph or diagram.";
 
-export function buildStillPrompt(input: { look: MotionLook; visual: MotionVisual; beat: MotionBeat; oneThing: string }): string {
-  const { look, visual, beat, oneThing } = input;
+/** The raw still's prompt. It does not depend on the look, so a re-finish for another look is free and faithful. */
+export function buildStillPrompt(input: { look?: MotionLook; visual: MotionVisual; beat: MotionBeat; oneThing: string }): string {
+  const { visual, beat, oneThing } = input;
   const subject = visual.subject.trim() || keyWords(beat).slice(0, 3).join(", ");
   const bare = subject.replace(/^(a|an|the|one)\s+/i, "");
   const frame =
     visual.placement === "plate"
       ? `A vertical 9:16 image of ${subject}. Keep the top 60% of the frame calm, simple and low in detail, because words will sit there; put the subject in the lower half.`
-      : `A single ${bare}, centred and isolated on a plain, flat, evenly coloured background in ${look.palette.ground} with no cast shadow, filling about 70% of a square frame with even margins.`;
+      : `A single ${bare}, centred and isolated on ${OBJECT_BACKDROP}, filling about 70% of a square frame with even margins.`;
   return [
     frame,
     `It pictures this line from a personal essay: "${beat.sourceQuote.trim()}"`,
     oneThing ? `The essay's point: "${oneThing.trim()}"` : "",
-    ART_DIRECTION[look.id] ?? "",
+    RAW_DIRECTION,
     RULES
   ]
     .filter(Boolean)
@@ -228,7 +232,67 @@ function dot(x: number, y: number, cell: number, angle: number, density: number)
   return 1 - smooth(radius - 0.06, radius + 0.06, dist);
 }
 
+/**
+ * Object alpha (0 = backdrop, 1 = object) at w×h. A green-screen backdrop keys by
+ * colour, so shadows cast on the green go too; any other plain backdrop (read from
+ * the border) keys by tone.
+ */
+async function objectAlpha(input: Buffer, w: number, h: number, fit: "cover" | "fill"): Promise<Float32Array> {
+  const rgb = await sharp(input).resize(w, h, { fit, position: "attention" }).removeAlpha().blur(1.5).raw().toBuffer();
+  const margin = Math.max(2, Math.round(w * 0.03));
+  const border: number[] = [];
+  for (let y = 0; y < h; y += 3) for (let x = 0; x < w; x += 3) if (x < margin || y < margin || x >= w - margin || y >= h - margin) border.push(y * w + x);
+  const median = (values: number[]) => values.sort((p, q) => p - q)[values.length >> 1];
+  const greenExcess = (i: number) => {
+    const r = rgb[i * 3], g = rgb[i * 3 + 1], b = rgb[i * 3 + 2];
+    return g < 12 ? 0 : (g - Math.max(r, b)) / g;
+  };
+  const alpha = new Float32Array(w * h);
+  const backdropGreen = median(border.map(greenExcess));
+  if (backdropGreen > 0.3) {
+    for (let i = 0; i < w * h; i++) alpha[i] = 1 - smooth(backdropGreen * 0.35, backdropGreen * 0.7, greenExcess(i));
+    return alpha;
+  }
+  const lum = await sharp(input).resize(w, h, { fit, position: "attention" }).removeAlpha().grayscale().normalise().blur(4).raw().toBuffer();
+  const bg = median(border.map((i) => lum[i])) / 255;
+  for (let i = 0; i < w * h; i++) alpha[i] = smooth(0.07, 0.2, Math.abs(lum[i] / 255 - bg));
+  return alpha;
+}
+
+/**
+ * Crop an object picture to its subject plus a margin, as a square. Models often
+ * draw the object small whatever the prompt says; trimming makes every object
+ * fill its slot the same way.
+ */
+async function trimObject(input: Buffer): Promise<Buffer> {
+  const S = 256;
+  const meta = await sharp(input).metadata();
+  const W0 = meta.width ?? 0;
+  const H0 = meta.height ?? 0;
+  if (!W0 || !H0) return input;
+  const alpha = await objectAlpha(input, S, S, "fill");
+  let x0 = S, y0 = S, x1 = -1, y1 = -1;
+  for (let y = 0; y < S; y++)
+    for (let x = 0; x < S; x++)
+      if (alpha[y * S + x] > 0.5) {
+        if (x < x0) x0 = x;
+        if (x > x1) x1 = x;
+        if (y < y0) y0 = y;
+        if (y > y1) y1 = y;
+      }
+  if (x1 < 0) return input;
+  const cx = ((x0 + x1 + 1) / 2 / S) * W0;
+  const cy = ((y0 + y1 + 1) / 2 / S) * H0;
+  const limit = Math.min(W0, H0);
+  const side = Math.round(Math.min(limit, Math.max(((x1 - x0 + 1) / S) * W0, ((y1 - y0 + 1) / S) * H0) * 1.4));
+  if (side >= limit * 0.9) return input;
+  const left = Math.round(Math.min(Math.max(cx - side / 2, 0), W0 - side));
+  const top = Math.round(Math.min(Math.max(cy - side / 2, 0), H0 - side));
+  return sharp(input).extract({ left, top, width: side, height: side }).toBuffer();
+}
+
 export async function finishForLook(input: Buffer, look: MotionLook, placement: MotionVisual["placement"]): Promise<Buffer> {
+  if (placement === "object") input = await trimObject(input);
   const W = placement === "plate" ? 1080 : 900;
   const H = placement === "plate" ? 1920 : 900;
   const { data } = await sharp(input)
@@ -240,19 +304,11 @@ export async function finishForLook(input: Buffer, look: MotionLook, placement: 
     .toBuffer({ resolveWithObject: true });
   const out = Buffer.alloc(W * H * 3);
 
-  // Objects: key out the plain background (read from the border) so it becomes the
-  // look's ground in every look, whatever colour the picture was generated on.
-  // Without this a dark-ground object turns into a black square in a light look.
-  let mask: Buffer | undefined;
-  let bg = 0;
-  if (placement === "object") {
-    mask = await sharp(input).resize(W, H, { fit: "cover", position: "attention" }).removeAlpha().grayscale().normalise().blur(4).raw().toBuffer();
-    const ring: number[] = [];
-    const margin = Math.round(W * 0.03);
-    for (let y = 0; y < H; y += 3) for (let x = 0; x < W; x += 3) if (x < margin || y < margin || x >= W - margin || y >= H - margin) ring.push(mask[y * W + x]);
-    ring.sort((a, b) => a - b);
-    bg = ring[ring.length >> 1] / 255;
-  }
+  // Objects: key out the backdrop so it becomes the look's ground in every look,
+  // whatever colour it was generated on (else a dark-ground object is a black square
+  // in a light look), and draw a thin outline so a white object still reads on paper.
+  const alpha = placement === "object" ? await objectAlpha(input, W, H, "cover") : undefined;
+  const line = hex(look.id === "night-signal" ? look.palette.accent : look.palette.ink);
 
   const ground = hex(look.palette.ground);
   const ink = hex(look.palette.ink);
@@ -297,11 +353,17 @@ export async function finishForLook(input: Buffer, look: MotionLook, placement: 
           r = blend(mid[0], hi[0], t); g = blend(mid[1], hi[1], t); b = blend(mid[2], hi[2], t);
         }
       }
-      if (mask) {
-        const k = smooth(0.07, 0.2, Math.abs(mask[i] / 255 - bg));
+      if (alpha) {
+        const k = alpha[i];
         r = ground[0] + (r - ground[0]) * k;
         g = ground[1] + (g - ground[1]) * k;
         b = ground[2] + (b - ground[2]) * k;
+        const kx = alpha[y * W + Math.min(W - 1, x + 2)] - alpha[y * W + Math.max(0, x - 2)];
+        const ky = alpha[Math.min(H - 1, y + 2) * W + x] - alpha[Math.max(0, y - 2) * W + x];
+        const edge = smooth(0.25, 0.6, Math.abs(kx) + Math.abs(ky)) * (look.id === "night-signal" ? 0.6 : 0.85);
+        r += (line[0] - r) * edge;
+        g += (line[1] - g) * edge;
+        b += (line[2] - b) * edge;
       }
       const grain = look.id === "night-signal" ? 0 : (hash(x + 7, y + 3) - 0.5) * 0.035;
       out[i * 3] = Math.round(clamp01(r + grain) * 255);

@@ -89,9 +89,14 @@ describe("pictures — planning and prompts", () => {
       expect(prompt).toMatch(/No text, letters, numbers/);
       expect(prompt).toMatch(/No real or recognisable people/);
     }
+    // One raw serves every look: the prompt never changes with the look, and asks for an evenly lit photo.
+    const prompts = Object.values(MOTION_LOOKS).map((look) => buildStillPrompt({ look, visual: beat.visual!, beat, oneThing: story.oneThing }));
+    expect(new Set(prompts).size).toBe(1);
+    expect(prompts[0]).toMatch(/evenly lit/);
+    expect(prompts[0]).not.toMatch(/low-light|near-black|engraving|risograph/);
     const object = buildStillPrompt({ look: MOTION_LOOKS["riso-print"], visual: { ...beat.visual!, placement: "object" }, beat, oneThing: "" });
-    expect(object).toContain(MOTION_LOOKS["riso-print"].palette.ground);
-    const laundry = buildStillPrompt({ look: MOTION_LOOKS["night-signal"], visual: { ...beat.visual!, placement: "object", subject: "a small pile of folded laundry" }, beat, oneThing: "x" });
+    expect(object).toMatch(/chroma-key green backdrop/);
+    const laundry = buildStillPrompt({ visual: { ...beat.visual!, placement: "object", subject: "a small pile of folded laundry" }, beat, oneThing: "x" });
     expect(laundry).toContain("A single small pile of folded laundry");
     expect(laundry).not.toMatch(/"\./);
   });
@@ -113,6 +118,41 @@ describe("pictures — finishing in the look", () => {
       const [r, g, b] = [data[0], data[1], data[2]];
       expect(Math.abs(r - g) + Math.abs(g - b) + Math.abs(r - b) > 4 || look.id === "paper-ember").toBe(true);
     }
+  });
+
+  it("keys a green-screen object by colour: the shadow on the green goes, a white object stays and gets an outline", async () => {
+    const src = await sharp({ create: { width: 1024, height: 1024, channels: 3, background: "#00B140" } })
+      .composite([{ input: Buffer.from('<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024"><rect x="250" y="420" width="260" height="200" fill="#006a26"/><rect x="380" y="380" width="300" height="240" fill="#f4f4f2"/></svg>') }])
+      .png()
+      .toBuffer();
+    for (const look of Object.values(MOTION_LOOKS)) {
+      const { data } = await sharp(await finishForLook(src, look, "object")).raw().toBuffer({ resolveWithObject: true });
+      const ground = [1, 3, 5].map((i) => parseInt(look.palette.ground.slice(i, i + 2), 16));
+      const off = (x: number, y: number) => [0, 1, 2].reduce((sum, c) => sum + Math.abs(data[(y * 900 + x) * 3 + c] - ground[c]), 0) / 3;
+      // Scan the middle row: the shadow (left of the white card) is ground; the card's edges are drawn.
+      const row = [...Array(900).keys()].map((x) => off(x, 450));
+      const firstDrawn = row.findIndex((v) => v > 40);
+      expect(firstDrawn).toBeGreaterThan(0);
+      // Left of the card's edge, where the dark-green shadow was, sits at the ground.
+      const shadowZone = row.slice(Math.max(0, firstDrawn - 120), firstDrawn - 8);
+      expect(Math.max(...shadowZone)).toBeLessThan(14);
+    }
+  });
+
+  it("trims a small object so it fills its slot, whatever size the model drew it", async () => {
+    const src = await sharp({ create: { width: 1024, height: 1024, channels: 3, background: "#d8d8d8" } })
+      .composite([{ input: Buffer.from('<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024"><rect x="440" y="560" width="150" height="110" fill="#3a4a60"/></svg>') }])
+      .png()
+      .toBuffer();
+    const look = MOTION_LOOKS["paper-ember"]; // a dark object draws as ink here
+    const { data } = await sharp(await finishForLook(src, look, "object")).raw().toBuffer({ resolveWithObject: true });
+    const ground = [1, 3, 5].map((i) => parseInt(look.palette.ground.slice(i, i + 2), 16));
+    let drawn = 0;
+    for (let x = 0; x < 900; x++) {
+      const at = (450 * 900 + x) * 3;
+      if ([0, 1, 2].some((c) => Math.abs(data[at + c] - ground[c]) > 20)) drawn += 1;
+    }
+    expect(drawn / 900).toBeGreaterThan(0.5); // was about 15% of the width before trimming
   });
 
   it("keys an object's plain background to the look's ground, dark or light, so it never shows as a square", async () => {
