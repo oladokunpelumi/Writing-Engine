@@ -113,7 +113,7 @@ export const MOTION_LOOKS: Record<MotionLookId, MotionLook> = {
     name: "Riso Print",
     bestFor: "Lists, proof and figures, and Co-Create marketing that should feel loud and made.",
     medium: "A two-plate risograph: blue ink for words, fluorescent orange for emphasis and its off-register shadow, halftone dots for every gradient.",
-    palette: { ground: "#F2EDE3", ink: "#2337A0", accent: "#FF5C39", accentText: "#2337A0", second: "#FF5C39", muted: "#B8BCD8" },
+    palette: { ground: "#F2EDE3", ink: "#2337A0", accent: "#E8441F", accentText: "#2337A0", second: "#FF5C39", muted: "#B8BCD8" },
     display: { family: "Archivo Black", weight: 400, caps: true, lineHeight: 0.96, tracking: "-0.005em", maxSize: 240, maxChars: 15, file: null },
     revealStyle: "print",
     carrier: "halftone",

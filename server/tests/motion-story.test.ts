@@ -285,6 +285,22 @@ describe("motion story — looks and treatments", () => {
     expect(notes.some((issue) => /slam or stamp/.test(issue.message))).toBe(true);
   });
 
+  it("holds every look to its own contrast rules: accent 3:1, accent text and ink 4.5:1", () => {
+    const lum = (hexColor: string) => {
+      const [r, g, b] = [1, 3, 5].map((i) => parseInt(hexColor.slice(i, i + 2), 16) / 255).map((c) => (c <= 0.03928 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4));
+      return 0.2126 * r + 0.7152 * g + 0.0722 * b;
+    };
+    const ratio = (a: string, b: string) => {
+      const [hi, lo] = [lum(a), lum(b)].sort((x, y) => y - x);
+      return (hi + 0.05) / (lo + 0.05);
+    };
+    for (const look of Object.values(MOTION_LOOKS)) {
+      expect(ratio(look.palette.accent, look.palette.ground), `${look.id} accent`).toBeGreaterThanOrEqual(3);
+      expect(ratio(look.palette.accentText, look.palette.ground), `${look.id} accentText`).toBeGreaterThanOrEqual(4.5);
+      expect(ratio(look.palette.ink, look.palette.ground), `${look.id} ink`).toBeGreaterThanOrEqual(4.5);
+    }
+  });
+
   it("keeps motion-kit/looks.json in step with shared/src/motionLooks.ts", () => {
     const kit = JSON.parse(readFileSync(join(__dirname, "..", "..", "motion-kit", "looks.json"), "utf8"));
     expect(kit.looks).toEqual(JSON.parse(JSON.stringify(MOTION_LOOKS)));
