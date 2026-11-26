@@ -14,7 +14,7 @@ import { MOTION_LOOKS, type VideoProject } from "../../shared/src";
 import { openDatabase } from "../src/db";
 import { ownerContext } from "../src/context";
 import { Repository } from "../src/repository";
-import { buildMotionPieceFolder, checkMotionWords, runMotionStory } from "../src/motionStory";
+import { applyMotionEdit, buildMotionPieceFolder, checkMotionWords, negatedWord, runMotionStory } from "../src/motionStory";
 import {
   MAX_STILLS,
   MIN_STILLS,
@@ -97,8 +97,37 @@ describe("pictures — planning and prompts", () => {
     const object = buildStillPrompt({ look: MOTION_LOOKS["riso-print"], visual: { ...beat.visual!, placement: "object" }, beat, oneThing: "" });
     expect(object).toMatch(/chroma-key green backdrop/);
     const laundry = buildStillPrompt({ visual: { ...beat.visual!, placement: "object", subject: "a small pile of folded laundry" }, beat, oneThing: "x" });
-    expect(laundry).toContain("A single small pile of folded laundry");
+    expect(laundry).toContain("of a single small pile of folded laundry"); // no doubled article
     expect(laundry).not.toMatch(/"\./);
+  });
+});
+
+describe("pictures — kept through the writer's edits", () => {
+  it("keeps every picture, with the writer's new subject, when the story is saved or re-timed", async () => {
+    const { story } = await runMotionStory({ text: PIECE, targetSeconds: 30 });
+    const pictured = story.beats.findIndex((beat) => beat.visual && beat.visual.kind !== "icon");
+    expect(pictured).toBeGreaterThanOrEqual(0);
+    const beats = story.beats.map((beat, i) => (i === pictured ? { ...beat, visual: { ...beat.visual!, subject: "a brass pendulum" }, end: beat.end + 0.5 } : beat));
+    const saved = applyMotionEdit(story, { beats, oneThing: "They are weights." });
+    expect(saved.beats.filter((beat) => beat.visual).length).toBe(story.beats.filter((beat) => beat.visual).length);
+    expect(saved.beats[pictured].visual?.subject).toBe("a brass pendulum");
+  });
+
+  it("with no hint from the story model, pictures the line itself instead of a keyword list", async () => {
+    const { story } = await runMotionStory({ text: PIECE, targetSeconds: 30 }); // offline: no hints
+    const beat = story.beats.find((b) => b.visual && b.visual.kind !== "icon")!;
+    expect(beat.visual!.subject).toBe("");
+    const prompt = buildStillPrompt({ visual: beat.visual!, beat, oneThing: story.oneThing });
+    expect(prompt).toMatch(/pictures the line below|stands for the line below/);
+    expect(prompt).toContain(beat.sourceQuote);
+  });
+
+  it("strikes the negated thing, not the word after 'not'", () => {
+    expect(negatedWord("You are not moving from lack.")).toBe("lack");
+    expect(negatedWord("That is not small.")).toBe("small");
+    expect(negatedWord("They are not walls. They are weights.")).toBe("walls");
+    expect(negatedWord("It is not about the money but the time")).toBe("money");
+    expect(negatedWord("Nothing to see here")).toBeUndefined();
   });
 });
 
@@ -154,6 +183,17 @@ describe("pictures — finishing in the look", () => {
     expect(plate.channels).toBe(3); // plates stay opaque
   });
 
+  it("fills holes the key punched inside an object (green spill on a shiny surface)", async () => {
+    // A brass disc on green, with a band across it that reflects the backdrop.
+    const src = await sharp({ create: { width: 1024, height: 1024, channels: 3, background: "#00B140" } })
+      .composite([{ input: Buffer.from('<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024"><circle cx="512" cy="512" r="300" fill="#b8923c"/><rect x="262" y="490" width="500" height="44" fill="#1fae45"/></svg>') }])
+      .png()
+      .toBuffer();
+    const { data } = await sharp(await finishForLook(src, MOTION_LOOKS["night-signal"], "object")).raw().toBuffer({ resolveWithObject: true });
+    expect(data[(450 * 900 + 450) * 4 + 3]).toBe(255); // the reflected band, mid-object, is opaque
+    expect(data[3]).toBe(0); // the backdrop is still cut away
+  });
+
   it("trims a small object so it fills its slot, whatever size the model drew it", async () => {
     const src = await sharp({ create: { width: 1024, height: 1024, channels: 3, background: "#d8d8d8" } })
       .composite([{ input: Buffer.from('<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024"><rect x="440" y="560" width="150" height="110" fill="#3a4a60"/></svg>') }])
@@ -167,7 +207,9 @@ describe("pictures — finishing in the look", () => {
       const at = (450 * 900 + x) * 3;
       if ([0, 1, 2].some((c) => Math.abs(data[at + c] - ground[c]) > 20)) drawn += 1;
     }
-    expect(drawn / 900).toBeGreaterThan(0.5); // was about 15% of the width before trimming
+    // Untrimmed it spans ~15% of the width; trimmed (with the 2.5x enlargement cap) ~37%.
+    expect(drawn / 900).toBeGreaterThan(0.3);
+    expect(drawn / 900).toBeLessThan(0.5);
   });
 
   it("keys an object's plain background to the look's ground, dark or light, so it never shows as a square", async () => {

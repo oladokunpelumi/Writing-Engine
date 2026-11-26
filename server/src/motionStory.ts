@@ -43,6 +43,7 @@ import {
   resolveTreatment,
   MotionBeatRoleSchema,
   MotionTransitionSchema,
+  MotionVisualSchema,
   ONE_THING_DOCTRINE,
   hasConcreteAnchor
 } from "../../shared/src";
@@ -215,6 +216,8 @@ interface RawBeat {
   visualAction?: string;
   transitionOut?: string;
   sourceQuote?: string;
+  /** A picture already on the beat (writer edits, re-times); kept as is. */
+  visual?: unknown;
 }
 
 /**
@@ -303,7 +306,9 @@ export function normalizeBeats(raw: RawBeat[], targetSeconds: number, options: {
       emphasis: (beat.emphasis ?? []).map(String).filter((word) => word && onScreen.includes(word.toLowerCase())).slice(0, 3),
       transitionOut: index === cleaned.length - 1 ? "cut" : transitionOf(beat.transitionOut),
       sourceQuote: String(beat.sourceQuote ?? "").trim(),
-      treatment: (MOTION_TREATMENTS as readonly string[]).includes(String(beat.treatment)) ? (beat.treatment as MotionTreatment) : undefined
+      treatment: (MOTION_TREATMENTS as readonly string[]).includes(String(beat.treatment)) ? (beat.treatment as MotionTreatment) : undefined,
+      // A beat keeps its picture through every re-time and edit.
+      visual: MotionVisualSchema.safeParse(beat.visual).success ? MotionVisualSchema.parse(beat.visual) : undefined
     };
   });
 }
@@ -401,8 +406,13 @@ export function mockMotionStory(input: { text: string; title?: string; targetSec
 }
 
 /** The word a "not" negates, e.g. "They are not walls." -> "walls". */
-function negatedWord(text: string): string | undefined {
-  return text.match(/\b(?:not|never|isn'?t|aren'?t|no longer)\s+(?:a |an |the |just |your |my )?([A-Za-z][\w'-]*)/i)?.[1];
+const NEGATION_FILLER = new Set("a an the just your my our their his her its yet even really from to of in on at for with by about any".split(" "));
+
+export function negatedWord(text: string): string | undefined {
+  const clause = text.match(/\b(?:not|never|isn'?t|aren'?t|no longer)\s+([^.,;:!?\u2014\u2013]+)/i)?.[1];
+  if (!clause) return undefined;
+  const words = clause.split(/\s+(?:but|because|and|so|or)\s+/i)[0].match(/[A-Za-z][\w'-]*/g) ?? [];
+  return words.filter((word) => !NEGATION_FILLER.has(word.toLowerCase())).at(-1) ?? words.at(-1);
 }
 
 /**
@@ -914,7 +924,8 @@ function picturesLines(story: MotionStory): string[] {
       return "- " + beat.title + ": " + (v.kind === "video-shot" ? "hero video shot from a " : "") + v.placement + " picture of " + v.subject + ", " + state + ".";
     });
   if (!lines.length) lines.push("- None: a words-only reel.");
-  lines.push("- Picture spend so far: $" + (story.visualSpendUsd ?? 0).toFixed(2) + " of a $" + (story.visualBudgetUsd ?? 3).toFixed(2) + " cap (stills and hero shots together).");
+  const spent = story.visualSpendUsd ?? 0;
+  lines.push("- Picture spend so far: " + (spent > 0 && spent < 0.01 ? "under $0.01" : "$" + spent.toFixed(2)) + " of a $" + (story.visualBudgetUsd ?? 3).toFixed(2) + " cap (stills and hero shots together).");
   return lines;
 }
 
@@ -986,10 +997,10 @@ function claudeMarkdown(slug: string, story: MotionStory): string {
     "1. Read `brief.md`, then `story.json`.",
     "2. Build: `node work/motion-kit/build.mjs .` writes a HyperFrames project to `video/` in the story's look " +
       `(${look.name}). Try another look with \`--look paper-ember|night-signal|riso-print --out video-<look>\`. Copy, times, seams and treatments are data; never retype them in \`video/\`.`,
-    "3. Check: `export HYPERFRAMES_NO_TELEMETRY=1`, then in `video/`: `npx --yes hyperframes@0.8.223 check --json` (0 errors) and the motion-doctrine seam gate on `video/ledger.json`.",
-    "4. Review with `motion-review-loop` or `npx hyperframes snapshot --review`: every beat readable for its whole hold, every cut carrying words across.",
+    "3. Check: `export HYPERFRAMES_NO_TELEMETRY=1`, then in `video/`: `npx --yes hyperframes@0.8.223 check --json` (0 errors) and the motion-doctrine seam gate, pinned to the same HyperFrames (unpinned, npx fetches a newer one whose preview the gate cannot read): `node ~/.claude/skills/motion-doctrine/scripts/seam-gate.mjs verify --ledger ledger.json --project . --server-cmd \"npx --yes hyperframes@0.8.223 preview --foreground --no-open --port {port}\"`.",
+    "4. Review with `motion-review-loop` or `npx --yes hyperframes@0.8.223 snapshot --review`: every beat readable for its whole hold, every cut carrying words across.",
     `5. Sound with the \`sound-effects\` skill: \`video/cues.json\` is the cue list; the look suggests ${look.music.suggestion}. Check the licence page first.`,
-    "6. Render (`npx hyperframes render --quality delivery`), then deliver with `reel-export` into `deliver/`, named as `brief.md` says.",
+    "6. Render (`npx --yes hyperframes@0.8.223 render --quality delivery`), then deliver with `reel-export` into `deliver/`, named as `brief.md` says.",
     "",
     "Do not add numbers, names or claims that are not in `story.json`. Ask before using any paid service or uploading media.",
     ""

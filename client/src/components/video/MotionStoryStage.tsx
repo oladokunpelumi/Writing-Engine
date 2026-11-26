@@ -348,6 +348,11 @@ function PictureRow({ beat, onChange }: { beat: MotionBeat; onChange: (visual: M
           <option value="video-shot">Hero video shot</option>
         </select>
         {v && v.kind !== "icon" ? <span className={v.status === "generated" ? "text-tide" : v.status === "failed" || v.status === "over-budget" ? "text-ember" : ""}>{v.status}</span> : null}
+        {v && v.kind !== "icon" && v.imageId && v.status === "generated" ? (
+          <button type="button" className="underline hover:text-slate-800" onClick={() => onChange({ ...v, status: "planned", error: undefined })} title="Make a new picture for this beat on the next Generate (the current one stays until then)">
+            Regenerate
+          </button>
+        ) : null}
       </div>
       {v && v.kind === "icon" ? (
         <div className="flex items-center gap-2">
@@ -359,7 +364,7 @@ function PictureRow({ beat, onChange }: { beat: MotionBeat; onChange: (visual: M
         <div className="flex items-start gap-2">
           <label className="grid flex-1 gap-1 text-xs text-slate-500">
             What to picture (no words in pictures)
-            <input className="input py-1 text-xs" value={v.subject} onChange={(event) => onChange({ ...v, subject: event.target.value, status: v.imageId ? v.status : "planned" })} />
+            <input className="input py-1 text-xs" placeholder="Leave empty to picture the line itself" value={v.subject} onChange={(event) => onChange({ ...v, subject: event.target.value, status: v.imageId ? v.status : "planned" })} />
             {v.kind === "video-shot" ? (
               <input className="input py-1 text-xs" value={v.motion} onChange={(event) => onChange({ ...v, motion: event.target.value })} title="Camera move for the hero shot" />
             ) : null}

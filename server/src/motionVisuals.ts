@@ -139,7 +139,9 @@ export function planMotionVisuals(story: MotionStory, hints: Array<string | unde
   for (const { index } of scored) {
     if (stills >= want) break;
     const beat = beats[index];
-    const subject = hints[index]?.trim() || keyWords(beat).slice(0, 3).join(", ");
+    // Without a hint from the story model, leave the subject empty: the prompt then
+    // pictures the beat's own line, which beats a list of its keywords.
+    const subject = hints[index]?.trim() || "";
     const isHero = !hero && beat.role === "hook";
     beats[index] = {
       ...beat,
@@ -190,12 +192,12 @@ const RULES =
 /** The raw still's prompt. It does not depend on the look, so a re-finish for another look is free and faithful. */
 export function buildStillPrompt(input: { look?: MotionLook; visual: MotionVisual; beat: MotionBeat; oneThing: string }): string {
   const { visual, beat, oneThing } = input;
-  const subject = visual.subject.trim() || keyWords(beat).slice(0, 3).join(", ");
+  const subject = visual.subject.trim();
   const bare = subject.replace(/^(a|an|the|one)\s+/i, "");
   const frame =
     visual.placement === "plate"
-      ? `A vertical 9:16 image of ${subject}. Keep the top 60% of the frame calm, simple and low in detail, because words will sit there; put the subject in the lower half.`
-      : `A single ${bare}, centred and isolated on ${OBJECT_BACKDROP}, filling about 70% of a square frame with even margins.`;
+      ? `A vertical 9:16 image of ${subject || "one concrete, literal scene that pictures the line below"}. Keep the top 60% of the frame calm, simple and low in detail, because words will sit there; put the subject in the lower half.`
+      : `A close-up studio product photograph of a single ${bare || "everyday object that stands for the line below"}, centred and isolated on ${OBJECT_BACKDROP}. The object is large in the frame, filling about 70% of the square, with even margins.`;
   return [
     frame,
     `It pictures this line from a personal essay: "${beat.sourceQuote.trim()}"`,
@@ -250,13 +252,49 @@ async function objectAlpha(input: Buffer, w: number, h: number, fit: "cover" | "
   const alpha = new Float32Array(w * h);
   const backdropGreen = median(border.map(greenExcess));
   if (backdropGreen > 0.3) {
-    for (let i = 0; i < w * h; i++) alpha[i] = 1 - smooth(backdropGreen * 0.35, backdropGreen * 0.7, greenExcess(i));
-    return alpha;
+    // Only near-backdrop greens key out; green spill on a shiny object stays.
+    for (let i = 0; i < w * h; i++) alpha[i] = 1 - smooth(backdropGreen * 0.5, backdropGreen * 0.8, greenExcess(i));
+  } else {
+    const lum = await sharp(input).resize(w, h, { fit, position: "attention" }).removeAlpha().grayscale().normalise().blur(4).raw().toBuffer();
+    const bg = median(border.map((i) => lum[i])) / 255;
+    for (let i = 0; i < w * h; i++) alpha[i] = smooth(0.07, 0.2, Math.abs(lum[i] / 255 - bg));
   }
-  const lum = await sharp(input).resize(w, h, { fit, position: "attention" }).removeAlpha().grayscale().normalise().blur(4).raw().toBuffer();
-  const bg = median(border.map((i) => lum[i])) / 255;
-  for (let i = 0; i < w * h; i++) alpha[i] = smooth(0.07, 0.2, Math.abs(lum[i] / 255 - bg));
+  fillHoles(alpha, w, h);
   return alpha;
+}
+
+/**
+ * Backdrop is what the border can reach through keyed-out pixels. Keyed-out
+ * pixels it cannot reach are holes inside the object (a reflection of the
+ * backdrop, a highlight the same tone as it), so they become object again.
+ */
+function fillHoles(alpha: Float32Array, w: number, h: number) {
+  const outside = new Uint8Array(w * h);
+  const queue = new Int32Array(w * h);
+  let head = 0;
+  let tail = 0;
+  const visit = (i: number) => {
+    if (outside[i] || alpha[i] >= 0.5) return;
+    outside[i] = 1;
+    queue[tail++] = i;
+  };
+  for (let x = 0; x < w; x++) {
+    visit(x);
+    visit((h - 1) * w + x);
+  }
+  for (let y = 0; y < h; y++) {
+    visit(y * w);
+    visit(y * w + w - 1);
+  }
+  while (head < tail) {
+    const i = queue[head++];
+    const x = i % w;
+    if (x > 0) visit(i - 1);
+    if (x < w - 1) visit(i + 1);
+    if (i >= w) visit(i - w);
+    if (i < (h - 1) * w) visit(i + w);
+  }
+  for (let i = 0; i < w * h; i++) if (alpha[i] < 0.5 && !outside[i]) alpha[i] = 1;
 }
 
 /**
@@ -284,7 +322,7 @@ async function trimObject(input: Buffer): Promise<Buffer> {
   const cx = ((x0 + x1 + 1) / 2 / S) * W0;
   const cy = ((y0 + y1 + 1) / 2 / S) * H0;
   const limit = Math.min(W0, H0);
-  const side = Math.round(Math.min(limit, Math.max(((x1 - x0 + 1) / S) * W0, ((y1 - y0 + 1) / S) * H0) * 1.4));
+  const side = Math.round(Math.min(limit, Math.max(Math.max(((x1 - x0 + 1) / S) * W0, ((y1 - y0 + 1) / S) * H0) * 1.4, limit * 0.4)));
   if (side >= limit * 0.9) return input;
   const left = Math.round(Math.min(Math.max(cx - side / 2, 0), W0 - side));
   const top = Math.round(Math.min(Math.max(cy - side / 2, 0), H0 - side));
